@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>IG DM Archive</title>
+    <link rel="stylesheet" href="app.css" />
+    <script src="fixture.js"></script>
+    <script type="module" src="app.js"></script>
+  </head>
+  <body>
+    <main>
+      <header class="masthead">
+        <div class="mark" aria-hidden="true">↓</div>
+        <div>
+          <p class="eyebrow">YOUR CONVERSATIONS, YOUR FILES</p>
+          <h1>IG DM Archive</h1>
+        </div>
+        <span class="badge">Personal edition</span>
+      </header>
+      <p class="intro">
+        Keep a local copy of an Instagram conversation. No export quotas,
+        subscriptions, or external account.
+      </p>
+      <section class="card" aria-labelledby="source-heading">
+        <div class="section-head">
+          <h2 id="source-heading">1. Conversation</h2>
+          <button type="button" class="secondary" id="reconnect">
+            Check connection
+          </button>
+        </div>
+        <p id="source" role="status">Connecting to the Instagram tab…</p>
+        <p class="hint">
+          Open a conversation in Instagram, then click this extension’s toolbar
+          icon. Keep both tabs open during export.
+        </p>
+      </section>
+      <form id="export-form" class="card">
+        <h2>2. Choose what to keep</h2>
+        <fieldset id="settings">
+          <legend class="sr-only">Export settings</legend>
+          <div class="fields">
+            <label
+              >From <span class="hint">(optional)</span
+              ><input type="date" id="from" /></label
+            ><label
+              >Through <span class="hint">(optional)</span
+              ><input type="date" id="to" /></label
+            ><label
+              >Latest messages <span class="hint">(optional)</span
+              ><input
+                type="number"
+                min="1"
+                step="1"
+                id="limit"
+                placeholder="All messages"
+            /></label>
+          </div>
+          <p class="hint">
+            Dates use your local timezone. Leave these fields blank for all
+            available history.
+          </p>
+          <label class="check"
+            ><input type="checkbox" id="media" /><span
+              >Download attachments<span class="hint block"
+                >Include images in HTML and PDF, and media files in a ZIP.</span
+              ></span
+            ></label
+          >
+          <label class="check"
+            ><input type="checkbox" id="transcribe" /><span
+              >Transcribe voice messages<span class="hint block"
+                >Uses Instagram’s transcription service, when available.</span
+              ></span
+            ></label
+          >
+          <label class="check"
+            ><input type="checkbox" id="raw" checked /><span
+              >Preserve original message fields in JSON</span
+            ></label
+          >
+          <details>
+            <summary>Advanced</summary>
+            <label
+              >Message query ID<input
+                id="query-id"
+                type="text"
+                inputmode="numeric"
+                pattern="[0-9]+"
+                required
+                value="27048827731415519"
+            /></label>
+            <p class="hint">
+              Fallback for Instagram’s internal API. Change only if Instagram
+              updates the query.
+            </p>
+          </details>
+        </fieldset>
+        <div class="actions">
+          <button id="start" type="submit" disabled>Collect conversation</button
+          ><button type="button" id="resume" class="secondary" hidden>
+            Resume</button
+          ><button type="button" id="pause" class="secondary" hidden>
+            Pause
+          </button>
+        </div>
+      </form>
+      <section class="card" aria-labelledby="download-heading">
+        <div class="section-head">
+          <h2 id="download-heading">3. Save your archive</h2>
+          <span class="badge" id="count">0 messages</span>
+        </div>
+        <p id="progress" role="status" aria-live="polite">
+          Ready when you are.
+        </p>
+        <p id="error" role="alert" hidden></p>
+        <div class="actions downloads">
+          <button id="json" class="secondary" disabled>JSON</button
+          ><button id="txt" class="secondary" disabled>Text</button
+          ><button id="html" class="secondary" disabled>HTML</button
+          ><button id="pdf" class="secondary" disabled>Print / PDF</button
+          ><button id="zip" class="secondary" disabled>ZIP bundle</button>
+        </div>
+        <p class="hint">
+          Exports stay in this tab until you save them. Closing or reloading it
+          clears collected messages. Partial exports are clearly labelled.
+        </p>
+        <ul id="warnings" class="hint"></ul>
+      </section>
+      <footer>
+        No billing or analytics servers. Messages come directly from your
+        signed-in Instagram tab; attachments come from Meta’s CDN.
+      </footer>
+    </main>
+    <dialog id="preview">
+      <div class="section-head">
+        <h2>Print preview</h2>
+        <button id="close-preview" class="secondary">Close</button>
+      </div>
+      <p>Choose “Save as PDF” in the print dialog for a searchable PDF.</p>
+      <button id="print">Print / Save as PDF</button
+      ><iframe
+        id="report"
+        title="Conversation print preview"
+        sandbox="allow-same-origin allow-modals"
+      ></iframe>
+    </dialog>
+  </body>
+</html>
