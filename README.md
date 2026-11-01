@@ -76,4 +76,4 @@ npm run dev       # synthetic browser fixture at http://127.0.0.1:4318
 npm run package   # loadable extension ZIP
 ```
 
-CI runs tests/build and uploads the extension ZIP. The fixture and development server are excluded from the extension package. `fflate` supplies ZIP generation under its MIT license, bundled in `THIRD-PARTY-LICENSE.txt`.
+The optional workflow template in `ci/check.yml` runs tests/build and uploads the extension ZIP. To enable it, move it to `.github/workflows/check.yml` and push with an SSH identity or token that can update workflows. The fixture and development server are excluded from the extension package. `fflate` supplies ZIP generation under its MIT license, bundled in `THIRD-PARTY-LICENSE.txt`.
