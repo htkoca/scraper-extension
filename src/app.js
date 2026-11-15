@@ -1,3 +1,4 @@
+import { getPlatform } from "./platforms.js";
 import { createSession, parseDateRange } from "./model.js";
 import { fetchHistory, transcribe } from "./runner.js";
 import { downloadMedia } from "./media.js";
@@ -22,7 +23,12 @@ const fail = (error) => {
   $("error").hidden = false;
 };
 const request = (body) =>
-  chrome.runtime.sendMessage({ type: "instagram", tabId, request: body });
+  chrome.runtime.sendMessage({
+    type: "platform",
+    platform: context?.platform,
+    tabId,
+    request: body,
+  });
 function refreshControls() {
   $("settings").disabled = busy;
   $("start").disabled = busy || !context;
@@ -52,9 +58,20 @@ async function connect() {
   try {
     const result = await request({ kind: "context" });
     if (!result?.ok)
-      throw new Error(result?.error || "Could not connect to Instagram.");
+      throw new Error(
+        result?.error || "Could not connect to the conversation tab.",
+      );
     context = result;
-    $("source").textContent = `Connected · conversation ${result.threadId}`;
+    const platform = getPlatform(result.platform);
+    for (const capability of ["media", "transcribe", "queryId"]) {
+      const id = capability === "queryId" ? "query-id" : capability;
+      $(id).disabled = !platform.capabilities[capability];
+      $(id).closest(capability === "queryId" ? "details" : "label").hidden =
+        !platform.capabilities[capability];
+    }
+    $("platform-note").textContent = (result.warnings || []).join(" ");
+    $("source").textContent =
+      `Connected · ${platform.label} · ${result.title || result.threadId}`;
   } catch (error) {
     context = null;
     $("source").textContent = "No conversation connected";
@@ -124,10 +141,11 @@ $("export-form").addEventListener("submit", async (event) => {
     const options = {
       ...range,
       limit,
+      platform: context.platform || "instagram",
       threadId: context.threadId,
       queryId: $("query-id").value,
-      media: $("media").checked,
-      transcribe: $("transcribe").checked,
+      media: !$("media").disabled && $("media").checked,
+      transcribe: !$("transcribe").disabled && $("transcribe").checked,
       raw: $("raw").checked,
     };
     // Store preferences only, never messages or authentication tokens.
@@ -140,6 +158,7 @@ $("export-form").addEventListener("submit", async (event) => {
       },
     });
     session = createSession(options);
+    session.warnings.push(...(context.warnings || []));
     media = null;
     mediaComplete = false;
     transcriptionComplete = false;
@@ -165,7 +184,7 @@ function download(data, type, extension) {
     url = URL.createObjectURL(blob),
     a = document.createElement("a");
   a.href = url;
-  a.download = `instagram-${safeName(session.options.threadId)}-${new Date().toISOString().slice(0, 10)}${session.complete ? "" : "-partial"}.${extension}`;
+  a.download = `${session.options.platform}-${safeName(session.options.threadId)}-${new Date().toISOString().slice(0, 10)}${session.complete ? "" : "-partial"}.${extension}`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }

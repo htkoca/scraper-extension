@@ -1,4 +1,6 @@
 // Synthetic data for UI verification. Not included in the extension package.
+const platform =
+  new URLSearchParams(location.search).get("platform") || "instagram";
 window.chrome = {
   storage: { local: { get: async () => ({}), set: async () => {} } },
   runtime: {
@@ -7,11 +9,18 @@ window.chrome = {
       if (request.kind === "context")
         return {
           ok: true,
+          platform,
+          warnings:
+            platform === "whatsapp"
+              ? [
+                  "WhatsApp fixture: media downloads and transcription are unavailable.",
+                ]
+              : [],
           threadId: "123456789",
           title: "Fixture conversation",
         };
       const offset = request.cursor ? 20 : 0;
-      return {
+      const result = {
         ok: true,
         viewerId: "1",
         connection: {
@@ -38,6 +47,27 @@ window.chrome = {
           },
         },
       };
+      if (platform === "whatsapp")
+        return {
+          ok: true,
+          page: {
+            messages: result.connection.edges.map(({ node }) => ({
+              id: node.id,
+              timestamp: node.timestamp_ms,
+              senderId: node.sender_fbid,
+              sender: node.sender.name,
+              isMe: node.sender_fbid === "1",
+              text: node.text_body,
+              type: "chat",
+              reactions: [],
+              attachments: [],
+              raw: node,
+            })),
+            hasMore: result.connection.page_info.has_next_page,
+            nextCursor: result.connection.page_info.end_cursor,
+          },
+        };
+      return result;
     },
   },
 };

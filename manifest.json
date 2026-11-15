@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "IG DM Archive",
+  "name": "Conversation Archive",
   "version": "0.1.0",
-  "description": "Personal Instagram conversation exports. Local files, no quotas, accounts, or billing.",
+  "description": "Personal Instagram and WhatsApp conversation exports. Local files, no quotas, accounts, or billing.",
   "minimum_chrome_version": "120",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": [
@@ -10,8 +10,13 @@
     "https://*.fbcdn.net/*",
     "https://*.fbsbx.com/*"
   ],
-  "action": { "default_title": "Archive this Instagram conversation" },
-  "background": { "service_worker": "background.js", "type": "module" },
+  "action": {
+    "default_title": "Archive this conversation"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"
   }

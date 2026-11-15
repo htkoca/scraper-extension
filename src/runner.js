@@ -1,5 +1,5 @@
 import { acceptPage } from "./model.js";
-import { DEFAULT_QUERY_ID, TRANSCRIPTION_QUERY_ID } from "./instagram.js";
+import { getPlatform } from "./platforms.js";
 export async function wait(ms, signal) {
   signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
@@ -18,6 +18,7 @@ export async function fetchHistory(
   session,
   { request, signal, progress = () => {}, sleep = wait },
 ) {
+  const platform = getPlatform(session.options.platform);
   while (!session.complete) {
     signal?.throwIfAborted();
     let result;
@@ -26,23 +27,23 @@ export async function fetchHistory(
         kind: "messages",
         threadId: session.options.threadId,
         cursor: session.cursor,
-        queryId: session.options.queryId || DEFAULT_QUERY_ID,
+        ...platform.messageRequest(session.options),
       });
       signal?.throwIfAborted();
       if (result.ok) break;
       if (![429, 500, 502, 503, 504].includes(result.status) || attempt === 3)
-        throw new Error(result.error || "Instagram request failed.");
+        throw new Error(result.error || `${platform.label} request failed.`);
       const retrySeconds = Number(result.retryAfter);
       const delay =
         Number.isFinite(retrySeconds) && retrySeconds > 0
           ? Math.min(retrySeconds * 1000, 60000)
           : 3000 * 2 ** attempt;
       progress(
-        `Instagram is busy. Retrying in ${Math.ceil(delay / 1000)} seconds…`,
+        `${platform.label} is busy. Retrying in ${Math.ceil(delay / 1000)} seconds…`,
       );
       await sleep(delay, signal);
     }
-    acceptPage(session, result.connection, result.viewerId);
+    acceptPage(session, platform.page(result));
     progress(
       `${session.messages.length.toLocaleString()} messages collected · ${session.pages} pages`,
     );
@@ -53,6 +54,8 @@ export async function transcribe(
   session,
   { request, signal, progress = () => {}, sleep = wait },
 ) {
+  if (!getPlatform(session.options.platform).capabilities.transcribe)
+    throw new Error("Voice transcription is unavailable for this platform.");
   const audio = [
     ...new Map(
       session.messages
@@ -73,7 +76,7 @@ export async function transcribe(
         kind: "transcription",
         threadId: session.options.threadId,
         mediaId: attachment.mediaId,
-        queryId: TRANSCRIPTION_QUERY_ID,
+        ...getPlatform(session.options.platform).transcriptionRequest(),
       });
       signal?.throwIfAborted();
       if (result.ok) cache.set(attachment.mediaId, result.transcript);

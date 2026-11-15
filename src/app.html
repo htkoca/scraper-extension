@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>IG DM Archive</title>
+    <title>Conversation Archive</title>
     <link rel="stylesheet" href="app.css" />
     <script type="module" src="app.js"></script>
   </head>
@@ -13,13 +13,13 @@
         <div class="mark" aria-hidden="true">↓</div>
         <div>
           <p class="eyebrow">YOUR CONVERSATIONS, YOUR FILES</p>
-          <h1>IG DM Archive</h1>
+          <h1>Conversation Archive</h1>
         </div>
         <span class="badge">Personal edition</span>
       </header>
       <p class="intro">
-        Keep a local copy of an Instagram conversation. No export quotas,
-        subscriptions, or external account.
+        Keep a local copy of an Instagram or WhatsApp conversation. No export
+        quotas, subscriptions, or external account.
       </p>
       <section class="card" aria-labelledby="source-heading">
         <div class="section-head">
@@ -28,10 +28,11 @@
             Check connection
           </button>
         </div>
-        <p id="source" role="status">Connecting to the Instagram tab…</p>
+        <p id="source" role="status">Connecting to the conversation tab…</p>
+        <p id="platform-note" class="hint" role="status"></p>
         <p class="hint">
-          Open a conversation in Instagram, then click this extension’s toolbar
-          icon. Keep both tabs open during export.
+          Open a conversation in Instagram or WhatsApp, then click this
+          extension’s toolbar icon. Keep both tabs open during export.
         </p>
       </section>
       <form id="export-form" class="card">
@@ -75,7 +76,7 @@
           >
           <label class="check"
             ><input type="checkbox" id="raw" checked /><span
-              >Preserve original message fields in JSON</span
+              >Include source message fields in JSON</span
             ></label
           >
           <details>
@@ -128,7 +129,8 @@
       </section>
       <footer>
         No billing or analytics servers. Messages come directly from your
-        signed-in Instagram tab; attachments come from Meta’s CDN.
+        signed-in conversation tab. Supported Instagram attachments come from
+        Meta’s CDN.
       </footer>
     </main>
     <dialog id="preview">

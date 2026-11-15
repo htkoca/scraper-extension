@@ -1,13 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  acceptPage,
-  attachmentsFrom,
+  acceptPage as acceptNormalizedPage,
   createSession,
   isMediaUrl,
   parseDateRange,
 } from "./model.js";
+import { attachmentsFrom, normalizeMessage } from "./instagram-model.js";
 import { htmlReport, jsonReport, textReport } from "./export.js";
+const acceptPage = (session, connection, viewerId) =>
+  acceptNormalizedPage(session, {
+    messages: connection.edges?.map((e) => normalizeMessage(e.node, viewerId)),
+    hasMore: connection.page_info?.has_next_page,
+    nextCursor: connection.page_info?.end_cursor,
+  });
 const node = (id, time, text = "hello") => ({
   id,
   timestamp_ms: time,
