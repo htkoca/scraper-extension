@@ -17,7 +17,7 @@ npm run build
 4. Pin **IG DM Archive** in the extensions menu.
 5. Open a conversation at `https://www.instagram.com/direct/t/.../` and click the extension icon.
 
-The already-built folder on the development machine is `/Users/xuser/repos/htkoca/ig-dm-archive/dist`. After rebuilding, click Reload on the extension card and reopen the export tab.
+The already-built folder on the development machine is `/Users/xuser/repos/htkoca/dm-archive-extension/dist`. After rebuilding, click Reload on the extension card and reopen the export tab.
 
 `npm run package` creates `artifacts/ig-dm-archive.zip`. Extract that ZIP and load its folder as unpacked to install without Node.js. This is not a Chrome Web Store package.
 
