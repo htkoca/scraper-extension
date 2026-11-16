@@ -1,6 +1,6 @@
 # Conversation Archive
 
-A private, personal Chrome extension for exporting your Instagram and WhatsApp conversations. No quotas, licensing checks, billing, analytics, or developer backend. Independently implemented from observed Instagram API behavior; no code or assets from IG DM Exporter are included.
+A private, personal Chrome extension for exporting your Instagram and WhatsApp conversations and Instagram saved-post captions. No quotas, licensing checks, billing, analytics, or developer backend. Independently implemented from observed Instagram API behavior; no code or assets from IG DM Exporter are included.
 
 ## Install
 
@@ -20,6 +20,18 @@ npm run build
 After rebuilding, click Reload on the extension card and reopen the export tab. Load the `dist` folder from the checkout you built.
 
 `npm run package` creates `artifacts/ig-dm-archive.zip`. Extract that ZIP and load its folder as unpacked to install without Node.js. This is not a Chrome Web Store package.
+
+## Saved-post captions
+
+1. In Instagram, open your profile’s **Saved** page, then **All posts**.
+2. Click the extension icon, then **Collect saved posts**. Keep both tabs open.
+3. Save as Text, JSON, HTML, Print / PDF, or ZIP.
+
+Each entry includes the full caption returned by Instagram, author, post link, and publication date. Posts without captions are retained. Leave the post limit blank to collect all available saved posts. The export keeps Instagram’s saved-feed order. Dates saved, individual collection selection, comments, and photo/video downloads are not included.
+
+Pause and resume work in the same export tab. If a request fails, collected captions remain available as a partial archive. Reloading the export tab clears them.
+
+The saved-post adapter uses Instagram’s internal API and has automated fixture coverage, but has not yet been verified against a live signed-in account. Login prompts, rate limits, or API changes can stop collection.
 
 ## Use
 
@@ -52,6 +64,7 @@ Chrome's execution model is documented in the [Scripting API](https://developer.
 - `src/platforms.js`: platform detection, capabilities, request functions, and response normalization.
 - `src/whatsapp.js`: self-contained WhatsApp page adapter using the active chat and earlier-message loader.
 - `src/instagram-model.js`: Instagram message normalization and attachment discovery.
+- `src/instagram-saved.js`: signed-in saved-post pagination and caption extraction.
 - `src/instagram.js`: isolated, serializable page adapter for Instagram's internal GraphQL API. It tries the page's query module first and falls back to a configurable query ID.
 - `src/background.js`: opens the export tab and routes validated requests into the selected conversation tab.
 - `src/model.js`: shared message validation, filtering, deduplication, and pagination checkpoints.

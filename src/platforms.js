@@ -1,3 +1,4 @@
+import { instagramSavedRequest } from "./instagram-saved.js";
 import {
   instagramRequest,
   DEFAULT_QUERY_ID,
@@ -27,6 +28,18 @@ export const platforms = {
       hasMore: result.connection?.page_info?.has_next_page,
       nextCursor: result.connection?.page_info?.end_cursor,
     }),
+  },
+  "instagram-saved": {
+    id: "instagram-saved",
+    label: "Instagram saved posts",
+    itemLabel: "posts",
+    request: instagramSavedRequest,
+    matches: (url) =>
+      url.origin === "https://www.instagram.com" &&
+      /^\/[^/]+\/saved(?:\/all-posts)?\/?$/.test(url.pathname),
+    capabilities: { media: false, transcribe: false, queryId: false },
+    messageRequest: () => ({}),
+    page: (result) => result.page,
   },
   whatsapp: {
     id: "whatsapp",

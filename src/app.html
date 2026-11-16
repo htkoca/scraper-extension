@@ -12,27 +12,29 @@
       <header class="masthead">
         <div class="mark" aria-hidden="true">↓</div>
         <div>
-          <p class="eyebrow">YOUR CONVERSATIONS, YOUR FILES</p>
+          <p class="eyebrow">YOUR ARCHIVE, YOUR FILES</p>
           <h1>Conversation Archive</h1>
         </div>
         <span class="badge">Personal edition</span>
       </header>
       <p class="intro">
-        Keep a local copy of an Instagram or WhatsApp conversation. No export
-        quotas, subscriptions, or external account.
+        Keep a local copy of Instagram saved-post captions or an Instagram or
+        WhatsApp conversation. No export quotas, subscriptions, or external
+        account.
       </p>
       <section class="card" aria-labelledby="source-heading">
         <div class="section-head">
-          <h2 id="source-heading">1. Conversation</h2>
+          <h2 id="source-heading">1. Source</h2>
           <button type="button" class="secondary" id="reconnect">
             Check connection
           </button>
         </div>
-        <p id="source" role="status">Connecting to the conversation tab…</p>
+        <p id="source" role="status">Connecting to the source tab…</p>
         <p id="platform-note" class="hint" role="status"></p>
         <p class="hint">
-          Open a conversation in Instagram or WhatsApp, then click this
-          extension’s toolbar icon. Keep both tabs open during export.
+          Open your Instagram Saved page (All posts) or a conversation in
+          Instagram or WhatsApp, then click this extension’s toolbar icon. Keep
+          both tabs open during export.
         </p>
       </section>
       <form id="export-form" class="card">
@@ -47,7 +49,8 @@
               >Through <span class="hint">(optional)</span
               ><input type="date" id="to" /></label
             ><label
-              >Latest messages <span class="hint">(optional)</span
+              ><span id="limit-label">Latest messages</span>
+              <span class="hint">(optional)</span
               ><input
                 type="number"
                 min="1"
@@ -56,7 +59,7 @@
                 placeholder="All messages"
             /></label>
           </div>
-          <p class="hint">
+          <p class="hint" id="range-note">
             Dates use your local timezone. Leave these fields blank for all
             available history.
           </p>
@@ -76,7 +79,7 @@
           >
           <label class="check"
             ><input type="checkbox" id="raw" checked /><span
-              >Include source message fields in JSON</span
+              >Include source fields in JSON</span
             ></label
           >
           <details>
@@ -123,14 +126,14 @@
         </div>
         <p class="hint">
           Exports stay in this tab until you save them. Closing or reloading it
-          clears collected messages. Partial exports are clearly labelled.
+          clears collected items. Partial exports are clearly labelled.
         </p>
         <ul id="warnings" class="hint"></ul>
       </section>
       <footer>
-        No billing or analytics servers. Messages come directly from your
-        signed-in conversation tab. Supported Instagram attachments come from
-        Meta’s CDN.
+        No billing or analytics servers. Content comes directly from your
+        signed-in source tab. Supported Instagram attachments come from Meta’s
+        CDN.
       </footer>
     </main>
     <dialog id="preview">

@@ -16,8 +16,11 @@ window.chrome = {
                   "WhatsApp fixture: media downloads and transcription are unavailable.",
                 ]
               : [],
-          threadId: "123456789",
-          title: "Fixture conversation",
+          threadId: platform === "instagram-saved" ? "saved-1" : "123456789",
+          title:
+            platform === "instagram-saved"
+              ? "Saved posts"
+              : "Fixture conversation",
         };
       const offset = request.cursor ? 20 : 0;
       const result = {
@@ -47,6 +50,25 @@ window.chrome = {
           },
         },
       };
+      if (platform === "instagram-saved")
+        return {
+          ok: true,
+          page: {
+            messages: result.connection.edges.map(({ node }) => ({
+              id: node.id,
+              timestamp: node.timestamp_ms,
+              sender: "fixture_author",
+              text: node.text_body,
+              caption: node.text_body,
+              url: `https://www.instagram.com/p/fixture_${node.id}/`,
+              type: "saved-post",
+              attachments: [],
+              reactions: [],
+            })),
+            hasMore: result.connection.page_info.has_next_page,
+            nextCursor: result.connection.page_info.end_cursor,
+          },
+        };
       if (platform === "whatsapp")
         return {
           ok: true,

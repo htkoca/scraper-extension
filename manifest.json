@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Conversation Archive",
   "version": "0.1.0",
-  "description": "Personal Instagram and WhatsApp conversation exports. Local files, no quotas, accounts, or billing.",
+  "description": "Instagram saved-post captions and Instagram and WhatsApp conversation exports. Local files, no quotas, accounts, or billing.",
   "minimum_chrome_version": "120",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": [
@@ -11,7 +11,7 @@
     "https://*.fbsbx.com/*"
   ],
   "action": {
-    "default_title": "Archive this conversation"
+    "default_title": "Archive conversations or saved posts"
   },
   "background": {
     "service_worker": "background.js",

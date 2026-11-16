@@ -45,7 +45,7 @@ export async function fetchHistory(
     }
     acceptPage(session, platform.page(result));
     progress(
-      `${session.messages.length.toLocaleString()} messages collected · ${session.pages} pages`,
+      `${session.messages.length.toLocaleString()} ${platform.itemLabel || "messages"} collected · ${session.pages} pages`,
     );
     if (!session.complete) await sleep(600, signal);
   }

@@ -13,10 +13,13 @@ let context,
   media = null,
   mediaComplete = false,
   transcriptionComplete = false;
+const savedPosts = () =>
+  (session?.options.platform || context?.platform) === "instagram-saved";
+const itemLabel = () => (savedPosts() ? "posts" : "messages");
 const report = (text) => {
   $("progress").textContent = text;
   $("count").textContent =
-    `${session?.messages.length.toLocaleString() || 0} messages`;
+    `${session?.messages.length.toLocaleString() || 0} ${itemLabel()}`;
 };
 const fail = (error) => {
   $("error").textContent = error.message || String(error);
@@ -30,11 +33,15 @@ const request = (body) =>
     request: body,
   });
 function refreshControls() {
+  $("count").textContent =
+    `${session?.messages.length.toLocaleString() || 0} ${itemLabel()}`;
   $("settings").disabled = busy;
   $("start").disabled = busy || !context;
   $("start").textContent = session
     ? "Start new collection"
-    : "Collect conversation";
+    : context?.platform === "instagram-saved"
+      ? "Collect saved posts"
+      : "Collect conversation";
   $("pause").hidden = !busy;
   $("resume").hidden =
     busy ||
@@ -58,9 +65,7 @@ async function connect() {
   try {
     const result = await request({ kind: "context" });
     if (!result?.ok)
-      throw new Error(
-        result?.error || "Could not connect to the conversation tab.",
-      );
+      throw new Error(result?.error || "Could not connect to the source tab.");
     context = result;
     const platform = getPlatform(result.platform);
     for (const capability of ["media", "transcribe", "queryId"]) {
@@ -69,12 +74,22 @@ async function connect() {
       $(id).closest(capability === "queryId" ? "details" : "label").hidden =
         !platform.capabilities[capability];
     }
+    const saved = result.platform === "instagram-saved";
+    for (const id of ["from", "to"]) {
+      $(id).disabled = saved;
+      $(id).closest("label").hidden = saved;
+    }
+    $("limit-label").textContent = saved ? "Posts" : "Latest messages";
+    $("limit").placeholder = saved ? "All saved posts" : "All messages";
+    $("range-note").textContent = saved
+      ? "Leave the limit blank for all available saved posts. Posts follow Instagram’s saved-feed order."
+      : "Dates use your local timezone. Leave these fields blank for all available history.";
     $("platform-note").textContent = (result.warnings || []).join(" ");
     $("source").textContent =
       `Connected · ${platform.label} · ${result.title || result.threadId}`;
   } catch (error) {
     context = null;
-    $("source").textContent = "No conversation connected";
+    $("source").textContent = "No source connected";
     fail(error);
   }
   refreshControls();
@@ -106,14 +121,14 @@ async function collect() {
     }
     report(
       session.messages.length
-        ? `Collection complete. ${session.messages.length.toLocaleString()} messages ready to save.`
-        : "No messages found in the selected range.",
+        ? `Collection complete. ${session.messages.length.toLocaleString()} ${itemLabel()} ready to save.`
+        : `No ${itemLabel()} found.`,
     );
   } catch (error) {
     report(
       signal.aborted
         ? "Paused. Save a partial archive or resume."
-        : "Collection stopped. Your collected messages are still available.",
+        : "Collection stopped. Your collected items are still available.",
     );
     if (!signal.aborted) fail(error);
   } finally {
@@ -135,9 +150,12 @@ $("export-form").addEventListener("submit", async (event) => {
     const limit = $("limit").value ? Number($("limit").value) : null;
     if (limit !== null && (!Number.isSafeInteger(limit) || limit < 1))
       throw new Error(
-        "Message limit must be a positive whole number, or blank for all history.",
+        "The limit must be a positive whole number, or blank for all available items.",
       );
-    const range = parseDateRange($("from").value, $("to").value);
+    const range =
+      context.platform === "instagram-saved"
+        ? { start: null, end: null }
+        : parseDateRange($("from").value, $("to").value);
     const options = {
       ...range,
       limit,
@@ -204,9 +222,10 @@ $("html").addEventListener("click", () =>
 $("zip").addEventListener("click", () => {
   try {
     const files = Object.fromEntries(media?.files || []);
-    files["conversation.json"] = strToU8(jsonReport(session));
-    files["conversation.txt"] = strToU8(textReport(session));
-    files["conversation.html"] = strToU8(
+    const name = savedPosts() ? "saved-posts" : "conversation";
+    files[`${name}.json`] = strToU8(jsonReport(session));
+    files[`${name}.txt`] = strToU8(textReport(session));
+    files[`${name}.html`] = strToU8(
       htmlReport(session, new Map(), media?.paths),
     );
     files["attachment-errors.json"] = strToU8(

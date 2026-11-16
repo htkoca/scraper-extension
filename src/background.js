@@ -19,7 +19,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     const platform = platformForUrl(tab.url);
     if (!platform)
       throw new Error(
-        "Open an Instagram or WhatsApp conversation and click the extension icon again.",
+        "Open an Instagram conversation, your Instagram Saved page (All posts), or a WhatsApp chat and click the extension icon again.",
       );
     if (message.platform && platform.id !== message.platform)
       throw new Error(
