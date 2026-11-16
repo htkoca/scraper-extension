@@ -19,7 +19,7 @@ for (const checkbox of document.querySelectorAll("[data-site]")) {
       if (checkbox.checked)
         checkbox.checked = await chrome.permissions.request({ origins });
       else await chrome.permissions.remove({ origins });
-      status.textContent = checkbox.checked ? "Website enabled. Select tabs in Codex." : "Website disabled.";
+      status.textContent = checkbox.checked ? "Website enabled. Select tabs in your agent." : "Website disabled.";
     } catch (error) {
       checkbox.checked = false;
       report(error);
@@ -50,7 +50,7 @@ document.getElementById("reconnect").addEventListener("click", async () => {
       type: "reconnect-native"
     });
     if (result?.error) throw new Error(result.error);
-    status.textContent = "Reconnecting. Use list_tabs in Codex to check the connection.";
+    status.textContent = "Reconnecting. Use list_tabs in your agent to check the connection.";
   } catch (error) {
     report(error);
   }

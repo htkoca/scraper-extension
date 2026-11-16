@@ -58,7 +58,7 @@ await writeFile(
   JSON.stringify(
     {
       name: hostName,
-      description: "Scraper Extension local Codex bridge",
+      description: "Scraper Extension local agent bridge",
       path: launcher,
       type: "stdio",
       allowed_origins: [`chrome-extension://${extensionId}/`],
@@ -73,8 +73,17 @@ const extensionDir = await access(join(root, "extension")).then(
   () => "dist",
 );
 console.log(
-  `Load ${join(root, extensionDir)} in Chrome, then open extension options to enable websites and Codex access.`,
+  `Load ${join(root, extensionDir)} in Chrome, then open extension options to enable websites and agent access.`,
 );
 console.log(
-  `Register the MCP server: codex mcp add scraper-extension -- ${quote(process.execPath)} ${quote(join(root, "bridge", "mcp.mjs"))}`,
+  "Use the ChatGPT/Codex or Claude Code plugin, or configure a standalone MCP connection:",
+);
+console.log(
+  `Codex: codex mcp add scraper-extension -- ${quote(process.execPath)} ${quote(join(root, "bridge", "mcp.mjs"))}`,
+);
+console.log(
+  `Claude Code: claude mcp add --transport stdio --scope user scraper-extension -- ${quote(process.execPath)} ${quote(join(root, "bridge", "mcp.mjs"))}`,
+);
+console.log(
+  `Claude desktop: node ${quote(join(root, "scripts", "setup-claude-desktop.mjs"))}`,
 );

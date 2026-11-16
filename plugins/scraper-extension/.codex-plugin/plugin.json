@@ -1,6 +1,6 @@
 {
   "name": "scraper-extension",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Collect saved places, saved posts, and conversations using your signed-in Chrome profile.",
   "mcpServers": "./.mcp.json",
   "interface": {

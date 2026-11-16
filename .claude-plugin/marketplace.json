@@ -1,0 +1,11 @@
+{
+  "name": "scraper-extension-public",
+  "owner": { "name": "Scraper Extension" },
+  "plugins": [
+    {
+      "name": "scraper-extension",
+      "source": "./plugins/scraper-extension",
+      "description": "Collect saved places, posts, and conversations through your local Chrome session."
+    }
+  ]
+}

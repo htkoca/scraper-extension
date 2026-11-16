@@ -23,6 +23,34 @@ After rebuilding, click Reload on the extension card and reopen the export tab. 
 
 `npm run package` creates `artifacts/scraper-extension.zip`. Extract that ZIP and load its folder as unpacked to install without Node.js. This is not a Chrome Web Store package.
 
+## Supported clients
+
+The same local MCP runtime supports **Claude desktop, Claude Code, ChatGPT desktop, and Codex** on macOS/Linux with Chrome and Node.js 22+. It does not provide a remote endpoint for Claude or ChatGPT web-only sessions. No model-specific API key is needed.
+
+### Claude Code
+
+Add this repository URL with `/plugin marketplace add`, then run:
+
+```text
+/plugin install scraper-extension@scraper-extension-public
+```
+
+For a local checkout, `claude plugin marketplace add .` registers the same catalog. The `.claude-plugin/marketplace.json` catalog and each plugin's `.claude-plugin/plugin.json` follow Claude Code's format. Chrome setup is shared with the other clients.
+
+### Claude desktop
+
+After building the plugin, run:
+
+```sh
+node scripts/setup-claude-desktop.mjs
+```
+
+Append a Chrome profile name or directory to set a local preference. The installer copies the bundled server to a stable user directory, uses an absolute Node path, preserves other MCP servers and preferences, and backs up existing settings. Restart Claude desktop, then enable the server. The install output includes the shared native-host and Chrome-extension setup steps. The installer also ships inside the installed plugin.
+
+### ChatGPT desktop and Codex
+
+Use the public or personal marketplace below, or the standalone Codex MCP registration. All clients expose the same tools and use the same Chrome profile selection. Install through only one method per client.
+
 ## Agent setup
 
 ```sh
@@ -30,9 +58,9 @@ npm run setup:bridge
 codex mcp add scraper-extension -- node "$(pwd)/bridge/mcp.mjs"
 ```
 
-The installer supports Google Chrome on macOS and Linux. It registers a native host restricted to this extension's stable ID. The local MCP server uses a private Unix socket, with no TCP listener. Keep this checkout and its dependencies available; rerun setup after changes to the native host. Restart your Codex session after registration.
+The installer supports Google Chrome on macOS and Linux. It registers a native host restricted to this extension's stable ID. The local MCP server uses a private Unix socket, with no TCP listener. Keep this checkout and its dependencies available; rerun setup after changes to the native host. Restart the selected agent client after registration.
 
-Load this checkout's `dist` folder in Chrome. Open the extension's **Options**, enable the websites you want, then enable **Codex integration**. This grants tab metadata access and site access once. Tab or source selection happens in the agent conversation. The new stable extension ID may require installing this build separately from an earlier unpacked build; disable the old copy.
+Load this checkout's `dist` folder in Chrome. Open the extension's **Options**, enable the websites you want, then enable **Agent integration**. This grants tab metadata access and site access once. Tab or source selection happens in the agent conversation. The new stable extension ID may require installing this build separately from an earlier unpacked build; disable the old copy.
 
 Example requests:
 
@@ -136,6 +164,7 @@ No product-imposed export or message limit is present. Platform availability and
 Validation uses synthetic data, not personal messages. Unit/integration tests cover pagination, filtering, duplicate pages, retries, resume, query authentication, transcript reuse, CDN boundaries, and HTML escaping. The browser fixture verifies the collection and download UI. A live WhatsApp adapter smoke test collected 22 messages with valid timestamps and unique IDs. Automated WhatsApp tests cover earlier history, limits, resume, routing, and error handling. Full Chrome extension installation and a real Instagram export still need a smoke test in your profile.
 
 ```sh
+npm run package:plugin # rebuild the standalone plugin before package tests
 npm run check     # tests and extension build
 npm run dev       # synthetic browser fixture at http://127.0.0.1:4318
 npm run package   # loadable extension ZIP
@@ -165,6 +194,6 @@ node scripts/install-personal-plugin.mjs "Profile 1"
 codex plugin add scraper-extension@personal-local
 ```
 
-Replace `Profile 1` with your chosen Chrome profile directory or omit it to choose through the tools. The preference is written only to the local personal plugin, never the published package. Existing personal marketplace entries are preserved.
+Replace `Profile 1` with your chosen Chrome profile directory or omit it to choose through the tools. The preference is written only to the local personal plugin, never the published package. Existing personal marketplace entries are preserved. The installer also writes Claude Code’s personal catalog at `~/.claude-plugin/marketplace.json`; follow its printed registration command to enable it.
 
 Rebuild the plugin after source changes and include the regenerated `plugins/scraper-extension` files when publishing. The public GitHub marketplace is separate from OpenAI's reviewed directory; this project has not been submitted to that directory. Restart ChatGPT desktop after installation and test in a new chat. Avoid enabling both the standalone MCP registration and the plugin simultaneously, since they expose the same tools.
