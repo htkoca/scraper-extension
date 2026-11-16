@@ -1130,7 +1130,7 @@ var ScrapeService = class {
     const origins = siteOrigins[source.adapter.id === "instagram-saved" ? "instagram" : source.adapter.id];
     if (!await this.browser.permissions.contains({ origins }))
       throw new Error(
-        "Website access is missing. Enable it in extension options; tab selection stays in Codex."
+        "Website access is missing. Enable it in extension options; tab selection stays in your agent."
       );
     return source;
   }

@@ -133,6 +133,6 @@ export async function connectProfile(selector, dependencies = {}) {
     await sleep(500);
   }
   throw new Error(
-    `Opened Chrome profile ${profile.name} (${profile.directory}). Load the extension's dist folder in this profile and enable Codex integration in Options, then retry. Website login and permissions remain specific to this profile.`,
+    `Opened Chrome profile ${profile.name} (${profile.directory}). Load the extension's dist folder in this profile and enable Agent integration in Options, then retry. Website login and permissions remain specific to this profile.`,
   );
 }

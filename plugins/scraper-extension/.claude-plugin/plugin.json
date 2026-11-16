@@ -1,0 +1,5 @@
+{
+  "name": "scraper-extension",
+  "version": "0.3.0",
+  "description": "Collect saved places, saved posts, and conversations using your signed-in Chrome profile."
+}

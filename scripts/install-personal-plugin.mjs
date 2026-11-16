@@ -41,3 +41,30 @@ await writeFile(path, JSON.stringify(marketplace, null, 2) + "\n");
 console.log(
   `Personal marketplace updated. Install scraper-extension@${marketplace.name}.`,
 );
+
+// The same personal package is available to Claude Code through its native catalog.
+const claudePath = join(base, ".claude-plugin/marketplace.json");
+await mkdir(join(base, ".claude-plugin"), { recursive: true });
+let claudeMarketplace;
+try {
+  claudeMarketplace = JSON.parse(await readFile(claudePath, "utf8"));
+} catch (error) {
+  if (error.code !== "ENOENT") throw error;
+  claudeMarketplace = {
+    name: "scraper-personal",
+    owner: { name: "Scraper Extension" },
+    plugins: [],
+  };
+}
+claudeMarketplace.plugins = claudeMarketplace.plugins.filter(
+  (plugin) => plugin.name !== "scraper-extension",
+);
+claudeMarketplace.plugins.push({
+  name: "scraper-extension",
+  source: "./.codex/plugins/scraper-extension",
+});
+await writeFile(claudePath, JSON.stringify(claudeMarketplace, null, 2) + "\n");
+console.log(
+  `Claude Code personal catalog ready: claude plugin marketplace add "${base}"`,
+);
+console.log(`Then install scraper-extension@${claudeMarketplace.name}.`);

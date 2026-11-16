@@ -10,7 +10,13 @@ import {
 import { join } from "node:path";
 const root = "plugins/scraper-extension";
 await rm(root, { recursive: true, force: true });
-for (const dir of ["bridge", "scripts", "extension", ".codex-plugin"])
+for (const dir of [
+  "bridge",
+  "scripts",
+  "extension",
+  ".codex-plugin",
+  ".claude-plugin",
+])
   await mkdir(join(root, dir), { recursive: true });
 await build({
   entryPoints: ["bridge/mcp.mjs"],
@@ -29,6 +35,10 @@ for (const file of ["native-host.mjs", "transport.mjs"])
 await copyFile(
   "scripts/setup-bridge.mjs",
   join(root, "scripts/setup-bridge.mjs"),
+);
+await copyFile(
+  "scripts/setup-claude-desktop.mjs",
+  join(root, "scripts/setup-claude-desktop.mjs"),
 );
 await copyFile("manifest.json", join(root, "manifest.json"));
 for (const file of await readdir("dist"))
@@ -87,6 +97,18 @@ await writeFile(
     2,
   ) + "\n",
 );
+await writeFile(
+  join(root, ".claude-plugin/plugin.json"),
+  JSON.stringify(
+    {
+      name: manifest.name,
+      version: manifest.version,
+      description: manifest.description,
+    },
+    null,
+    2,
+  ) + "\n",
+);
 let notices =
   "Third-party licenses for the bundled MCP server and Chrome extension.\n";
 async function licenses(dir) {
@@ -110,8 +132,5 @@ async function licenses(dir) {
 }
 await licenses("node_modules");
 await writeFile(join(root, "THIRD-PARTY-LICENSES.txt"), notices);
-await writeFile(
-  join(root, "README.md"),
-  `# Scraper Extension\n\nRequires Node.js 22+ and Google Chrome on macOS or Linux.\n\nRun \`node scripts/setup-bridge.mjs\` from this plugin folder. In Chrome's extensions page, enable Developer mode and load this folder's \`extension\` directory. Enable website access and Codex integration in the extension's Options.\n\nRestart ChatGPT desktop and start a new chat with this plugin. Ask it to connect to your preferred Chrome profile, then name the service and source to collect. Profile preferences belong in local MCP configuration using SCRAPER_CHROME_PROFILE.\n\nResults remain in browser memory until the extension restarts and are sent to the calling agent on request. Chrome login and optional site access are required. No browser credentials are copied to the MCP server.\n\nMaps name discovery may require a saved-list URL. New website adapters have automated fixture coverage but still need live signed-in verification. This package is distributed through a GitHub marketplace, not the reviewed OpenAI directory.\n`,
-);
+await copyFile("plugin-metadata/README.md", join(root, "README.md"));
 console.log("Plugin packaged at " + root);
