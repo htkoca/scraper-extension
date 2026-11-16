@@ -4,63 +4,129 @@ A local Chrome extension and MCP server for agents to collect information using 
 
 No external scraping backend or copied login credentials are required. Chrome must be running in the signed-in profile with the extension enabled. Login, QR linking, and site permission prompts still require you.
 
-## Install
+## What it collects
 
-Requires Chrome 120 or newer and Node.js 22 or newer to build.
+| Service | Data | Agent service ID |
+| --- | --- | --- |
+| Google Maps saved list | Name, address, weekly hours, rating, review count, place URL | `google-maps` |
+| Instagram saved collection | Caption, author, post URL, publication date | `instagram-saved` |
+| Instagram conversation | Messages and supported message metadata | `instagram` |
+| WhatsApp conversation | Available linked-browser messages and selected metadata | `whatsapp` |
+
+Website adapters depend on changing site internals. See [validation status](#validation-status) before relying on completeness.
+
+## Install for an agent
+
+Requires Google Chrome 120+, Node.js 22+, and a client that can run a local stdio MCP server on the same computer as Chrome. The bridge installer supports macOS and Linux. The packaged plugin includes its dependencies; no `npm install` is needed to use it.
+
+Choose one installation method per client, then complete Chrome setup below. All clients share the same extension and native host.
+
+### Public marketplace: Codex and Claude Code
+
+The marketplace URL is **<https://github.com/htkoca/scraper-extension>**. Both catalogs are in this repository; no separate marketplace repository or reviewed public-directory listing is needed.
+
+For Codex:
 
 ```sh
-npm ci
-npm run build
+codex plugin marketplace add https://github.com/htkoca/scraper-extension.git
+codex plugin add scraper-extension@scraper-extension-public
 ```
 
-1. Switch Chrome to the profile where you use Instagram or WhatsApp.
-2. Open `chrome://extensions` and enable **Developer mode**.
-3. Click **Load unpacked** and choose this repository's `dist` folder.
-4. Pin **Scraper Extension** in the extensions menu.
-5. Open a conversation at `https://www.instagram.com/direct/t/.../` or `https://web.whatsapp.com/` and click the extension icon. Select a chat before opening the exporter.
+For Claude Code:
 
-After rebuilding, click Reload on the extension card and reopen the export tab. Load the `dist` folder from the checkout you built.
-
-`npm run package` creates `artifacts/scraper-extension.zip`. Extract that ZIP and load its folder as unpacked to install without Node.js. This is not a Chrome Web Store package.
-
-## Supported clients
-
-The same local MCP runtime supports **Claude desktop, Claude Code, ChatGPT desktop, and Codex** on macOS/Linux with Chrome and Node.js 22+. It does not provide a remote endpoint for Claude or ChatGPT web-only sessions. No model-specific API key is needed.
-
-### Claude Code
-
-Add this repository URL with `/plugin marketplace add`, then run:
-
-```text
-/plugin install scraper-extension@scraper-extension-public
+```sh
+claude plugin marketplace add https://github.com/htkoca/scraper-extension.git
+claude plugin install scraper-extension@scraper-extension-public
 ```
 
-For a local checkout, `claude plugin marketplace add .` registers the same catalog. The `.claude-plugin/marketplace.json` catalog and each plugin's `.claude-plugin/plugin.json` follow Claude Code's format. Chrome setup is shared with the other clients.
+For an unpublished checkout, use `codex plugin marketplace add .` or `claude plugin marketplace add .` from its root instead of the GitHub URL. Restart the client or start a new session after installation.
+
+### ChatGPT desktop
+
+Use a desktop Work/Codex session that supports local plugins. Open this repository in that session so its `.agents/plugins/marketplace.json` catalog is available, restart the app, and install **Scraper Extension** from the repository's marketplace in the plugin picker. The personal catalog below is another local installation route.
+
+The plugin declares `requires_local_executor`. Adding the repository URL to a web-only chat does not connect that chat to your computer. This project has no hosted MCP endpoint and does not provide a ChatGPT web installation.
 
 ### Claude desktop
 
-After building the plugin, run:
+From a checkout, install the included bundle:
 
 ```sh
 node scripts/setup-claude-desktop.mjs
 ```
 
-Append a Chrome profile name or directory to set a local preference. The installer copies the bundled server to a stable user directory, uses an absolute Node path, preserves other MCP servers and preferences, and backs up existing settings. Restart Claude desktop, then enable the server. The install output includes the shared native-host and Chrome-extension setup steps. The installer also ships inside the installed plugin.
+The installer copies the runtime and extension to a stable user directory, backs up existing Claude settings, and preserves other MCP servers. Follow its printed Chrome setup commands, then restart Claude desktop. The same installer is included in the plugin package. Append a Chrome profile name or directory to save a local preference.
 
-### ChatGPT desktop and Codex
+### Chrome setup
 
-Use the public or personal marketplace below, or the standalone Codex MCP registration. All clients expose the same tools and use the same Chrome profile selection. Install through only one method per client.
-
-## Agent setup
+For marketplace installs, find the installed `scraper-extension` plugin directory and run this command from it:
 
 ```sh
+node scripts/setup-bridge.mjs
+```
+
+The installer prints the extension directory to load. A packaged plugin uses `extension/`; a source build uses `dist/`.
+
+1. Switch Chrome to the profile where you use the supported websites.
+2. Open `chrome://extensions`, enable **Developer mode**, and choose **Load unpacked**.
+3. Load the directory printed by the installer.
+4. Open the extension's **Options**, enable the websites you want, then enable **Agent integration**.
+5. Sign in to the websites in that profile. WhatsApp QR linking, login, and permission prompts require you.
+6. Ask the agent to connect to that profile and collect a source by name or URL.
+
+The extension ID is `ljkanlhcnjiiemdbpffcffkmhiocpkmd`. Disable older copies with different IDs. Installing the agent plugin alone does not install or enable the Chrome extension.
+
+### Personal marketplaces
+
+From a checkout:
+
+```sh
+node scripts/install-personal-plugin.mjs "Profile 1"
+codex plugin marketplace add "$HOME"
+codex plugin add scraper-extension@personal-local
+claude plugin marketplace add "$HOME"
+claude plugin install scraper-extension@scraper-personal
+```
+
+Replace `Profile 1` with a Chrome profile directory or name, or omit it to choose through the tools. The installer copies the committed bundle to `~/.codex/plugins/scraper-extension` and writes local catalogs for both clients. Existing catalog names and other plugin entries are preserved; if a catalog already has a different name, use the name printed by the installer. Complete Chrome setup from the installed plugin folder.
+
+Profile preferences stay in local configuration. Rerun the installer with your preference when updating; running it without a profile or `SCRAPER_CHROME_PROFILE` copies the package's default configuration. Personal catalogs do not make the public repository's contents private.
+
+### Source build or standalone MCP
+
+```sh
+npm ci
+npm run build
 npm run setup:bridge
+```
+
+Load the printed `dist/` path in Chrome and enable the integration. Register the server with one client, using the commands printed by setup, or for Codex:
+
+```sh
 codex mcp add scraper-extension -- node "$(pwd)/bridge/mcp.mjs"
 ```
 
-The installer supports Google Chrome on macOS and Linux. It registers a native host restricted to this extension's stable ID. The local MCP server uses a private Unix socket, with no TCP listener. Keep this checkout and its dependencies available; rerun setup after changes to the native host. Restart the selected agent client after registration.
+Keep the checkout and dependencies available. Do not enable both standalone MCP and the plugin in the same client.
 
-Load this checkout's `dist` folder in Chrome. Open the extension's **Options**, enable the websites you want, then enable **Agent integration**. This grants tab metadata access and site access once. Tab or source selection happens in the agent conversation. The new stable extension ID may require installing this build separately from an earlier unpacked build; disable the old copy.
+### Updates
+
+Refresh the public marketplace and installed plugin:
+
+```sh
+codex plugin marketplace upgrade scraper-extension-public
+codex plugin add scraper-extension@scraper-extension-public
+```
+
+```sh
+claude plugin marketplace update scraper-extension-public
+claude plugin update scraper-extension@scraper-extension-public
+```
+
+For personal installs, update the checkout, rerun the personal installer with your profile preference, and refresh/reinstall from the local catalog. For Claude desktop, rerun its installer. Source builds need `npm ci` and `npm run build` after an update.
+
+Rerun native-host setup from the updated installation, then reload the extension at `chrome://extensions`. If the plugin cache path changed, load the new `extension/` directory. Restart the agent client and use a new conversation. Updating a marketplace does not reload Chrome or replace a running MCP process.
+
+## Agent workflow and profiles
 
 Example requests:
 
@@ -74,7 +140,7 @@ Set `SCRAPER_CHROME_PROFILE` in your local MCP configuration to a Chrome profile
 
 `list_tabs` uses the default profile unless `allProfiles: true` is explicitly requested. Tools accept an optional `connectionId`; omitting it connects to the default profile. Source and job IDs still belong to their original connection.
 
-The agent uses `list_tabs` to identify a browser connection, then `prepare_source` with a service (`google-maps`, `instagram-saved`, `instagram`, or `whatsapp`) and a URL, name, or discovered candidate ID. `discover_sources` lists matching account sources and returns pagination cursors where available. Exact names resolve automatically; ambiguous names return candidates. Instagram username lookup searches existing inbox threads. WhatsApp reads loaded chat models without selecting a chat or sending messages.
+The agent normally uses `prepare_source` with a service (`google-maps`, `instagram-saved`, `instagram`, or `whatsapp`) and a URL, name, or discovered candidate ID. Use `list_tabs` only when choosing among pages already open. Selection happens once in the agent conversation, with no second tab picker in Chrome. `discover_sources` lists matching account sources and returns pagination cursors where available. Exact names resolve automatically; ambiguous names return candidates. Instagram username lookup searches existing inbox threads. WhatsApp reads loaded chat models without selecting a chat or sending messages.
 
 `start_scrape` returns a job ID immediately. Use `get_status`, then paginate `get_results` using `nextOffset`. `cancel_job`, `resume_job`, and `delete_job` manage jobs. `release_source` closes a background source tab created by the integration after its results have been retrieved. It never closes a user-owned tab. Service discovery tabs are retained for reuse and login.
 
@@ -104,7 +170,7 @@ Pause and resume work in the same export tab. If a request fails, collected capt
 
 The saved-post adapter uses Instagram’s internal API and has automated fixture coverage, but has not yet been verified against a live signed-in account. Login prompts, rate limits, or API changes can stop collection.
 
-## Use
+## Manual conversation exports
 
 Click **Collect conversation**, wait for completion, then choose a download:
 
@@ -133,21 +199,6 @@ Authentication tokens stay in the Instagram page context. Collected data returns
 
 Chrome's execution model is documented in the [Scripting API](https://developer.chrome.com/docs/extensions/reference/api/scripting). The adapter uses the page's MAIN world to access the logged-in Instagram session.
 
-## Implementation
-
-- `src/platforms.js`: platform detection, capabilities, request functions, and response normalization.
-- `src/whatsapp.js`: self-contained WhatsApp page adapter using the active chat and earlier-message loader.
-- `src/instagram-model.js`: Instagram message normalization and attachment discovery.
-- `src/instagram-saved.js`: signed-in saved-post pagination and caption extraction.
-- `src/instagram.js`: isolated, serializable page adapter for Instagram's internal GraphQL API. It tries the page's query module first and falls back to a configurable query ID.
-- `src/background.js`: opens the export tab and routes validated requests into the selected conversation tab.
-- `src/model.js`: shared message validation, filtering, deduplication, and pagination checkpoints.
-- `src/runner.js`: paced pagination, bounded retries, cancellation, and voice transcription.
-- `src/export.js` / `src/media.js`: local report generation and attachment downloading.
-- `src/app.*`: keyboard-accessible export controls and print preview.
-
-Message requests are spaced by at least 600 ms. HTTP 429 and transient server failures get bounded backoff; authentication and GraphQL errors stop immediately. Attachment downloads run with at most three concurrent requests. Nothing disables either platform's access controls or rate limits.
-
 ## Limits and validation
 
 No product-imposed export or message limit is present. Platform availability and browser memory still apply:
@@ -163,37 +214,24 @@ No product-imposed export or message limit is present. Platform availability and
 
 Validation uses synthetic data, not personal messages. Unit/integration tests cover pagination, filtering, duplicate pages, retries, resume, query authentication, transcript reuse, CDN boundaries, and HTML escaping. The browser fixture verifies the collection and download UI. A live WhatsApp adapter smoke test collected 22 messages with valid timestamps and unique IDs. Automated WhatsApp tests cover earlier history, limits, resume, routing, and error handling. Full Chrome extension installation and a real Instagram export still need a smoke test in your profile.
 
-```sh
-npm run package:plugin # rebuild the standalone plugin before package tests
-npm run check     # tests and extension build
-npm run dev       # synthetic browser fixture at http://127.0.0.1:4318
-npm run package   # loadable extension ZIP
-```
+## Manual installation
 
-The optional workflow template in `ci/check.yml` runs tests/build and uploads the extension ZIP. To enable it, move it to `.github/workflows/check.yml` and push with an SSH identity or token that can update workflows. The fixture and development server are excluded from the extension package. `fflate` supplies ZIP generation under its MIT license, bundled in `THIRD-PARTY-LICENSE.txt`.
+To use the toolbar exporter without an agent, run `npm ci` and `npm run build`, then load `dist/` as an unpacked extension. Pin the extension, open a conversation or Instagram Saved page, and click its icon. Select the conversation in the website before opening the exporter. The native host and **Agent integration** are only needed for agents.
 
-## Adding a platform
+`npm run package` creates `artifacts/scraper-extension.zip`. Extract it and load its folder as unpacked to install the manual exporter without Node.js. This is not a Chrome Web Store package. After rebuilding, reload the extension and reopen the export tab.
 
-Register URL detection and site permissions in `src/sources.js`, implement a self-contained page adapter, and add discovery in `src/discovery.js` when the site supports named sources. `src/source-manager.js` owns background source tabs; `src/scrape-service.js` owns jobs and typed results. Places use their own schema rather than pretending to be messages.
+## Troubleshooting
 
-Add a self-contained page request function and register it in `src/platforms.js`. Declare URL matching and capabilities, then convert responses to `{ messages, hasMore, nextCursor }`. Messages use `{ id, timestamp, sender, senderId, isMe, text, type, reactions, attachments, raw }`, with millisecond timestamps. Pages must be newest first with stable IDs and cursors. The shared runner owns retries, filtering, deduplication, pause/resume, and exports.
+| Symptom | Check |
+| --- | --- |
+| Tools are missing or duplicated | Restart the client in a new session. Enable one installation method per client. |
+| No browser connection | Run native-host setup, check the loaded extension ID, and enable **Agent integration** in the intended profile. |
+| Wrong profile or multiple profiles | Use `list_profiles`, then `connect_browser` with an exact name, directory, or email. Keep defaults in local configuration. |
+| Website access denied | Enable that website in Options and complete Chrome's permission prompt. |
+| Named source cannot be found | Use `discover_sources`, follow pagination, or provide a supported URL. Maps may need a saved-list URL. |
+| Job missing after reload | Jobs are in memory. Start a new scrape; extension reloads and browser restarts discard old jobs. |
+| Collection stops early | Inspect `get_status` warnings and completeness. Retrieve partial results before restarting or navigating the source. |
 
-JSON schema version 2 adds `platform`; file names and report headings include the source platform. Add any required media handling and permissions explicitly rather than treating encrypted WhatsApp CDN URLs as downloadable images.
+## Development
 
-## Plugin marketplaces
-
-This repository is also a GitHub marketplace. Add its GitHub URL as a marketplace in ChatGPT desktop, then install **Scraper Extension**. From Codex CLI, use `codex plugin marketplace add <repository-url>` followed by `codex plugin add scraper-extension@scraper-extension-public`.
-
-The installable bundle is in `plugins/scraper-extension`. It includes the MCP runtime and Chrome extension, so it does not need an npm install. Node.js 22+ must be available. Run `node scripts/setup-bridge.mjs` from the installed plugin directory and load its `extension` folder in Chrome. Enable the integration and website permissions in Options.
-
-To maintain a personal marketplace from this checkout:
-
-```sh
-npm run package:plugin
-node scripts/install-personal-plugin.mjs "Profile 1"
-codex plugin add scraper-extension@personal-local
-```
-
-Replace `Profile 1` with your chosen Chrome profile directory or omit it to choose through the tools. The preference is written only to the local personal plugin, never the published package. Existing personal marketplace entries are preserved. The installer also writes Claude Code’s personal catalog at `~/.claude-plugin/marketplace.json`; follow its printed registration command to enable it.
-
-Rebuild the plugin after source changes and include the regenerated `plugins/scraper-extension` files when publishing. The public GitHub marketplace is separate from OpenAI's reviewed directory; this project has not been submitted to that directory. Restart ChatGPT desktop after installation and test in a new chat. Avoid enabling both the standalone MCP registration and the plugin simultaneously, since they expose the same tools.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the source map, build and validation commands, generated package policy, and instructions for adding a service.
