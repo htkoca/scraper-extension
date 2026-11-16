@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Scraper Extension",
+  "version": "0.2.0",
+  "description": "Scrape Google Maps saved lists, Instagram saved collections, and Instagram and WhatsApp conversations locally or through Codex.",
+  "minimum_chrome_version": "120",
+  "permissions": ["activeTab", "scripting", "storage", "nativeMessaging"],
+  "host_permissions": [
+    "https://*.cdninstagram.com/*",
+    "https://*.fbcdn.net/*",
+    "https://*.fbsbx.com/*"
+  ],
+  "action": {
+    "default_title": "Archive conversations or saved posts"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"
+  },
+  "optional_permissions": ["tabs"],
+  "optional_host_permissions": [
+    "https://www.instagram.com/*",
+    "https://web.whatsapp.com/*",
+    "https://www.google.com/maps/*",
+    "https://maps.google.com/*"
+  ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAlZnlurXCKrSfPe2GZnZLtXOsVBtPSsq8XtkIB10J44gpWC3sm8r2CoCD5YpVtpv3nj0eucinK3zQ+mVwOUbS/qY6kOy5ZcodT0xoX1hzl0HqRxyvRlJ06VygnuMAvgApS5BvIjGd5V6BUJKzlkmupGjgewizOQKGiOM93mAraFl9n8fDlFLsy6E9Eo2ZzTDqKAHHQumOrQm4VhgwUm7Ef+nbFoqC3YsuSqeFQL/4X2xHj3+qqkSmZ6nX3gsRTdmXocRcwXF0hN+1EVQvx21SutPfH/tY+Zz8oQ5kbqkQEhCVK+9JBUrLxPLFnAVtOdgmNjzosGR+qod1mLEJM4RHTwIDAQAB"
+}

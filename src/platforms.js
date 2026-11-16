@@ -36,9 +36,11 @@ export const platforms = {
     request: instagramSavedRequest,
     matches: (url) =>
       url.origin === "https://www.instagram.com" &&
-      /^\/[^/]+\/saved(?:\/all-posts)?\/?$/.test(url.pathname),
+      /^\/[^/]+\/saved(?:\/all-posts|\/(?:[^/]+\/)?\d+)?\/?$/.test(
+        url.pathname,
+      ),
     capabilities: { media: false, transcribe: false, queryId: false },
-    messageRequest: () => ({}),
+    messageRequest: (options) => ({ collectionId: options.collectionId }),
     page: (result) => result.page,
   },
   whatsapp: {

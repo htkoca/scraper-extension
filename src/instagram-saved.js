@@ -3,7 +3,9 @@ export async function instagramSavedRequest(request) {
   try {
     if (
       location.origin !== "https://www.instagram.com" ||
-      !/^\/[^/]+\/saved(?:\/all-posts)?\/?$/.test(location.pathname)
+      !/^\/[^/]+\/saved(?:\/all-posts|\/(?:[^/]+\/)?\d+)?\/?$/.test(
+        location.pathname,
+      )
     )
       throw new Error("Open your Instagram Saved page (All posts) first.");
     const cookie = (name) =>
@@ -17,20 +19,73 @@ export async function instagramSavedRequest(request) {
       throw new Error(
         "Sign in to Instagram, reload the Saved page, and try again.",
       );
-    const threadId = `saved-${viewerId}`;
+    const segments = location.pathname.split("/").filter(Boolean);
+    const selected = segments[2];
+    // Collection URLs use /user/saved/name/id/; All posts has no ID.
+    const pathCollection =
+      selected && selected !== "all-posts" ? segments.at(-1) : null;
+    const collectionId = request.collectionId || pathCollection;
+    if (collectionId && !/^\d+$/.test(collectionId))
+      throw new Error(
+        "This saved collection URL has no numeric collection ID. Open the collection itself.",
+      );
+    const threadId = collectionId
+      ? `saved-${viewerId}-${collectionId}`
+      : `saved-${viewerId}`;
     if (request.threadId && request.threadId !== threadId)
       throw new Error(
-        "The Instagram account changed. Return to the original account to resume.",
+        "The Instagram account changed or the selected collection changed. Return to the original source to resume.",
       );
     if (request.kind === "context")
       return {
         ok: true,
         threadId,
-        title: "Saved posts",
+        title: collectionId
+          ? `Saved collection ${collectionId}`
+          : "Saved posts",
+        collectionId: collectionId || null,
         warnings: [
           "Captions and post links only. Dates are publication dates, not dates saved. Posts without captions are retained.",
         ],
       };
+    if (request.kind === "collections") {
+      const params = new URLSearchParams({
+        collection_types: '["ALL_MEDIA_AUTO_COLLECTION","MEDIA"]',
+      });
+      if (request.cursor) params.set("max_id", request.cursor);
+      const response = await fetch("/api/v1/collections/list/?" + params, {
+        credentials: "include",
+        redirect: "error",
+        signal: AbortSignal.timeout(25000),
+        headers: { "X-CSRFToken": csrf, "X-IG-App-ID": "936619743392459" },
+      });
+      if (!response.ok)
+        throw new Error(
+          `Instagram returned HTTP ${response.status} while listing collections.`,
+        );
+      const body = await response.json();
+      if (body.status !== "ok" || !Array.isArray(body.items))
+        throw new Error("Instagram returned an unsupported collection list.");
+      const collections = body.items
+        .map((item) => ({
+          id: String(item.collection_id || item.id || ""),
+          name: item.collection_name || item.name,
+          count: Number.isSafeInteger(item.collection_media_count)
+            ? item.collection_media_count
+            : null,
+        }))
+        .filter(
+          (item) => /^\d+$/.test(item.id) && typeof item.name === "string",
+        );
+      if (collections.length !== body.items.length)
+        throw new Error("A collection is missing its name or numeric ID.");
+      const nextCursor = body.more_available
+        ? body.next_max_id || body.max_id
+        : null;
+      if (body.more_available && (!nextCursor || nextCursor === request.cursor))
+        throw new Error("Instagram repeated a collection cursor.");
+      return { ok: true, collections, nextCursor: nextCursor || null };
+    }
     if (request.kind !== "messages")
       throw new Error("Unsupported saved-post request.");
     const params = new URLSearchParams({
@@ -38,7 +93,10 @@ export async function instagramSavedRequest(request) {
       include_igtv_preview: "false",
     });
     if (request.cursor) params.set("max_id", request.cursor);
-    const response = await fetch("/api/v1/feed/saved/posts/?" + params, {
+    const endpoint = collectionId
+      ? `/api/v1/feed/collection/${collectionId}/`
+      : "/api/v1/feed/saved/posts/";
+    const response = await fetch(endpoint + "?" + params, {
       credentials: "include",
       redirect: "error",
       signal: AbortSignal.timeout(25000),

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Scraper Extension settings</title>
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <h1>Codex integration</h1>
+      <p>
+        Enable the websites you want to scrape. Name a source or choose tabs in
+        Codex; this page only manages access.
+      </p>
+      <fieldset>
+        <legend>Website access</legend>
+        <label
+          ><input type="checkbox" data-site="instagram" /> Instagram
+          conversations and saved collections</label
+        >
+        <label
+          ><input type="checkbox" data-site="whatsapp" /> WhatsApp
+          conversations</label
+        >
+        <label
+          ><input type="checkbox" data-site="google-maps" /> Google Maps saved
+          lists</label
+        >
+      </fieldset>
+      <p>
+        Install the local bridge with <code>npm run setup:bridge</code> from the
+        extension checkout first.
+      </p>
+      <label
+        ><input type="checkbox" id="enabled" /> Allow local Codex access to tab
+        titles and URLs and scraping tools</label
+      >
+      <p>
+        Website permissions allow access across that website. The integration
+        scrapes requested sources, opening background tabs when needed. Scraped
+        content is returned to the calling agent.
+      </p>
+      <button type="button" id="reconnect">Reconnect local bridge</button>
+      <p id="status" role="status" aria-live="polite"></p>
+      <script type="module" src="options.js"></script>
+    </main>
+  </body>
+</html>

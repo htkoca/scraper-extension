@@ -43,7 +43,10 @@ function environment({ empty = false, exhausted = false } = {}) {
       require: (name) => {
         if (name === "WAWebCollections")
           return {
-            Chat: { getActive: () => active },
+            Chat: {
+              getActive: () => active,
+              get: (key) => (key === "chat@g.us" ? chat : undefined),
+            },
             Contact: { get: () => ({ name: "Friend" }) },
           };
         if (name === "WAWebChatLoadMessages") return loader;
@@ -194,4 +197,22 @@ test("shared validation rejects an invalid page without advancing the checkpoint
   );
   assert.equal(s.messages.length, 0);
   assert.equal(s.cursor, null);
+});
+
+test("WhatsApp named target collects without changing the active conversation", async () => {
+  const e = environment({ exhausted: true });
+  e.switchChat();
+  const context = await e.request({ kind: "context", targetId: "chat@g.us" });
+  assert.equal(context.threadId, "chat@g.us");
+  const result = await e.request({
+    kind: "messages",
+    targetId: "chat@g.us",
+    threadId: context.threadId,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.page.messages.length, 50);
+  assert.equal(
+    (await e.request({ kind: "context", targetId: "missing" })).ok,
+    false,
+  );
 });

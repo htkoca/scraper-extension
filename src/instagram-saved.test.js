@@ -244,3 +244,45 @@ test("saved routing and serialized adapter reject wrong origins, collections and
   assert.match((await f.request({ kind: "context" })).error, /Saved page/);
   assert.equal(f.calls.length, 0);
 });
+
+test("saved collections use their own feed and account/collection-bound checkpoint", async () => {
+  const f = fixture({
+    first: { status: "ok", items: [post("1")], more_available: false },
+  });
+  f.env.location.pathname = "/me/saved/travel/123/";
+  const context = await f.request({ kind: "context" });
+  assert.equal(context.threadId, "saved-42-123");
+  assert.equal(context.collectionId, "123");
+  const s = session({ threadId: context.threadId });
+  await run(s, f);
+  assert.match(f.calls[0].url, /^\/api\/v1\/feed\/collection\/123\//);
+  f.env.location.pathname = "/me/saved/other/456/";
+  assert.equal(
+    (await f.request({ kind: "messages", threadId: context.threadId })).ok,
+    false,
+  );
+  assert.equal(f.calls.length, 1);
+});
+
+test("collections can be chosen by name in Codex and pagination never exposes cookies", async () => {
+  const f = fixture({
+    first: {
+      status: "ok",
+      items: [
+        {
+          collection_id: "123",
+          collection_name: "Food",
+          collection_media_count: 2,
+        },
+      ],
+      more_available: true,
+      next_max_id: "next",
+    },
+  });
+  const result = await f.request({ kind: "collections" });
+  assert.equal(result.collections[0].name, "Food");
+  assert.equal(result.collections[0].id, "123");
+  assert.equal(result.nextCursor, "next");
+  assert.match(f.calls[0].url, /^\/api\/v1\/collections\/list\//);
+  assert.ok(!JSON.stringify(result).includes("fixture-secret"));
+});

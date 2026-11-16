@@ -19,7 +19,9 @@ export async function whatsappRequest(request) {
       const text = value?.toString?.();
       return text && text !== "[object Object]" ? text : "";
     };
-    const chat = collections.Chat.getActive?.();
+    const chat = request.targetId
+      ? collections.Chat.get(request.targetId)
+      : collections.Chat.getActive?.();
     const threadId = id(chat?.id);
     if (!threadId) throw new Error("Open a WhatsApp conversation first.");
     if (request.threadId && request.threadId !== threadId)
@@ -79,7 +81,12 @@ export async function whatsappRequest(request) {
         );
     }
     // Recheck after async loading so a changed chat cannot be reported as complete.
-    const current = id(collections.Chat.getActive?.()?.id);
+    const current = id(
+      (request.targetId
+        ? collections.Chat.get(request.targetId)
+        : collections.Chat.getActive?.()
+      )?.id,
+    );
     if (current !== threadId)
       throw new Error(
         "The WhatsApp tab changed conversations during collection.",

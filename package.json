@@ -1,20 +1,26 @@
 {
-  "name": "ig-dm-archive",
-  "version": "0.1.0",
+  "name": "scraper-extension",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node --test src/*.test.js",
+    "test": "node --test src/*.test.js bridge/*.test.mjs",
     "check": "npm test && npm run build",
     "package": "npm run build && node scripts/package.mjs",
-    "dev": "npm run build && node scripts/serve.mjs"
+    "dev": "npm run build && node scripts/serve.mjs",
+    "setup:bridge": "node scripts/setup-bridge.mjs",
+    "mcp": "node bridge/mcp.mjs",
+    "package:plugin": "npm run build && node scripts/package-plugin.mjs"
   },
   "dependencies": {
-    "fflate": "^0.8.3"
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "fflate": "^0.8.3",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "esbuild": "^0.28.2",
+    "linkedom": "^0.18.15",
     "prettier": "^3.9.10"
   }
 }
