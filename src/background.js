@@ -1,3 +1,5 @@
+import { installNativeBridge } from "./native-bridge.js";
+installNativeBridge(chrome);
 import { platformForUrl } from "./platforms.js";
 
 chrome.action.onClicked.addListener(async (tab) => {

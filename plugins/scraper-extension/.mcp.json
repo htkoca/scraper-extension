@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "scraper": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/bridge/mcp.mjs"
+      ],
+      "cwd": "${CLAUDE_PLUGIN_ROOT}"
+    }
+  }
+}

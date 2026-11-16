@@ -1,0 +1,13 @@
+{
+  "name": "scraper-extension",
+  "version": "0.2.0",
+  "description": "Collect saved places, saved posts, and conversations using your signed-in Chrome profile.",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Scraper Extension",
+    "shortDescription": "Collect from your browser",
+    "longDescription": "Collect Google Maps saved-list entries, Instagram saved collections, and Instagram and WhatsApp conversations through your local Chrome session. Requires Chrome, Node.js 22+, the bundled Chrome extension and native host. Website adapters are experimental and require live verification.",
+    "category": "Productivity",
+    "defaultPrompt": "Help me collect information from a saved list or conversation in my browser."
+  }
+}
