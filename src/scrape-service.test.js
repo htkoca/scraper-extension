@@ -211,3 +211,64 @@ test("Maps jobs resolve place details in temporary tabs and always close them", 
   assert.equal(job.warnings.length, 1);
   assert.deepEqual(closed, [10]);
 });
+
+test("button-based Maps scans use a separate tab and close it on failure", async () => {
+  const f = fixture();
+  f.tab.url = "https://www.google.com/maps/@1,2,3z/data=!11m2!2slist!3e3";
+  const closed = [];
+  f.browser.tabs.create = async ({ url }) => ({
+    id: 10,
+    url,
+    status: "complete",
+  });
+  f.browser.tabs.get = async (id) =>
+    id === 10 ? { id, url: f.tab.url, status: "complete" } : f.tab;
+  f.browser.tabs.remove = async (id) => closed.push(id);
+  f.browser.scripting.executeScript = async ({ target, args }) => [
+    {
+      result:
+        args[0].kind === "context"
+          ? {
+              ok: true,
+              threadId: "list-123",
+              title: "Date",
+              buttonLayout: true,
+            }
+          : { ok: false, error: "List row failed" },
+    },
+  ];
+  const [tab] = await f.service.listTabs();
+  const status = await f.service.start({ sourceId: tab.sourceId });
+  const job = await finished(f.service, status.jobId);
+  assert.equal(job.state, "failed");
+  assert.match(job.error, /List row failed/);
+  assert.deepEqual(closed, [10]);
+  assert.equal(job.source.stale, undefined);
+  assert.equal(job.source.tabId, 7);
+});
+
+test("Maps source survives automatic map movement but rejects a different list", async () => {
+  const f = fixture();
+  f.tab.url = "https://www.google.com/maps/@1,2,3z/data=!11m2!2sdate!3e3";
+  const [source] = await f.service.listTabs();
+  f.tab.url = "https://www.google.com/maps/@4,5,6z/data=!11m2!2sdate!3e3?hl=en";
+  f.update({ url: f.tab.url });
+  await f.service.describe(source.sourceId);
+  f.tab.url = "https://www.google.com/maps/@4,5,6z/data=!11m2!2sother!3e3";
+  f.update({ url: f.tab.url });
+  await assert.rejects(
+    f.service.describe(source.sourceId),
+    /expired or changed/,
+  );
+});
+
+test("Maps source still expires on a document reload", async () => {
+  const f = fixture();
+  f.tab.url = "https://www.google.com/maps/placelists/list/date";
+  const [source] = await f.service.listTabs();
+  f.update({ status: "loading", url: f.tab.url });
+  await assert.rejects(
+    f.service.describe(source.sourceId),
+    /expired or changed/,
+  );
+});

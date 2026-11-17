@@ -1,5 +1,25 @@
 import { platformForUrl } from "./platforms.js";
 
+export function sameSourceUrl(first, second) {
+  if (first === second) return true;
+  try {
+    const a = new URL(first);
+    const b = new URL(second);
+    const listId = (url) =>
+      /!11m\d+!2s([^!]+)/.exec(url.href)?.[1] ||
+      /\/placelists\/list\/([^/?]+)/.exec(url.pathname)?.[1];
+    return Boolean(
+      sourceForUrl(first)?.id === "google-maps" &&
+      sourceForUrl(second)?.id === "google-maps" &&
+      a.origin === b.origin &&
+      listId(a) &&
+      listId(a) === listId(b),
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function sourceForUrl(value) {
   const platform = platformForUrl(value);
   if (platform)

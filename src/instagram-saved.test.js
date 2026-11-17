@@ -29,14 +29,49 @@ function fixture(pages) {
     document: { cookie: "ds_user_id=42; csrftoken=fixture-secret" },
     URLSearchParams,
     AbortSignal,
+    window: {
+      require: (name) => ({ token: name === "LSD" ? "test-lsd" : "test-dtsg" }),
+    },
     fetch: async (url, options) => {
       calls.push({ url, options });
+      const body = new URLSearchParams(options.body || "");
+      const variables = JSON.parse(body.get("variables") || "{}");
       const cursor =
+        variables.after ||
         new URL(url, "https://www.instagram.com").searchParams.get("max_id") ||
         "first";
       const page = pages[cursor];
       if (page instanceof Error) throw page;
-      return page?.http || { ok: true, json: async () => page };
+      if (page?.http) return page.http;
+      if (url === "/api/graphql") {
+        const connection = {
+          edges: page.items.map((node) => ({ node: node.media || node })),
+          page_info: {
+            has_next_page: page.more_available,
+            end_cursor: page.next_max_id || null,
+          },
+        };
+        return {
+          ok: true,
+          json: async () => ({
+            data:
+              body.get("fb_api_req_friendly_name") ===
+              "PolarisProfileSavedTabContentQuery"
+                ? {
+                    viewer: {
+                      collections_unified_with_auto_collections: connection,
+                    },
+                  }
+                : {
+                    fetch__MediaCollection: {
+                      id: variables.collection_id,
+                      media: connection,
+                    },
+                  },
+          }),
+        };
+      }
+      return { ok: true, json: async () => page };
     },
   });
   return {
@@ -255,7 +290,12 @@ test("saved collections use their own feed and account/collection-bound checkpoi
   assert.equal(context.collectionId, "123");
   const s = session({ threadId: context.threadId });
   await run(s, f);
-  assert.match(f.calls[0].url, /^\/api\/v1\/feed\/collection\/123\//);
+  assert.equal(f.calls[0].url, "/api/graphql");
+  assert.equal(
+    JSON.parse(new URLSearchParams(f.calls[0].options.body).get("variables"))
+      .collection_id,
+    "123",
+  );
   f.env.location.pathname = "/me/saved/other/456/";
   assert.equal(
     (await f.request({ kind: "messages", threadId: context.threadId })).ok,
@@ -283,6 +323,26 @@ test("collections can be chosen by name in Codex and pagination never exposes co
   assert.equal(result.collections[0].name, "Food");
   assert.equal(result.collections[0].id, "123");
   assert.equal(result.nextCursor, "next");
-  assert.match(f.calls[0].url, /^\/api\/v1\/collections\/list\//);
+  assert.equal(f.calls[0].url, "/api/graphql");
+  assert.equal(
+    new URLSearchParams(f.calls[0].options.body).get("doc_id"),
+    "27584326974521636",
+  );
   assert.ok(!JSON.stringify(result).includes("fixture-secret"));
+});
+
+test("manual named collection errors preserve HTTP status for retry", async () => {
+  const f = fixture({
+    first: {
+      http: {
+        ok: false,
+        status: 429,
+        headers: new Headers({ "Retry-After": "2" }),
+      },
+    },
+  });
+  const result = await f.request({ kind: "collections" });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 429);
+  assert.equal(result.retryAfter, "2");
 });

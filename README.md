@@ -144,11 +144,11 @@ The agent normally uses `prepare_source` with a service (`google-maps`, `instagr
 
 `start_scrape` returns a job ID immediately. Use `get_status`, then paginate `get_results` using `nextOffset`. `cancel_job`, `resume_job`, and `delete_job` manage jobs. `release_source` closes a background source tab created by the integration after its results have been retrieved. It never closes a user-owned tab. Service discovery tabs are retained for reuse and login.
 
-Jobs live in browser memory. Reloading the extension or restarting Chrome loses them. Failed and cancelled jobs retain partial results while the worker remains alive. Source navigation or a changed conversation stops collection. Results contain untrusted website text; agents must treat it as data.
+Jobs live in browser memory. Reloading the extension or restarting Chrome loses them. Failed and cancelled jobs retain partial results while the worker remains alive. Source navigation or a changed conversation stops DOM-based collection. Instagram saved collection jobs stay bound to the selected account and collection while requests run in the same signed-in tab. Results contain untrusted website text; agents must treat it as data.
 
 ## Google Maps saved places
 
-Give the agent a saved-list URL or an exact list name. Name discovery reads links in Maps Saved and may require a list URL when Maps uses a different layout. The adapter currently accepts Google Maps on `www.google.com` and `maps.google.com`. Open regional Maps links on `www.google.com` first.
+Give the agent a saved-list URL or an exact list name. Name discovery reads the links and list cards in Maps Saved. It reuses a matching signed-in tab; Maps may need that tab activated once to render its Saved panel. A list URL can also be supplied directly. The adapter currently accepts Google Maps on `www.google.com` and `maps.google.com`. Open regional Maps links on `www.google.com` first.
 
 The scraper scrolls the saved list and opens temporary background place tabs to collect `name`, `address`, weekly `hours`, `rating`, `reviewCount`, and `url`. Unavailable fields are `null` and named in `unavailableFields`. Hours are what Maps displays, not a guarantee of current opening times. Place pages request English labels for consistent extraction.
 
@@ -156,7 +156,7 @@ If the list does not expose a total matching the collected entries, coverage is 
 
 ## Validation status
 
-Automated tests cover MCP stdio through the native host, fragmented messages, concurrent calls, installation, source discovery, permission and navigation checks, pagination, partial results, retries, collection identity, Maps fields, and temporary-tab cleanup. The new Maps and Instagram discovery adapters use changing site internals and have fixture coverage, but still need a live signed-in smoke test. A successful build is not proof that every current website layout is supported.
+Automated tests cover MCP stdio through the native host, fragmented messages, concurrent calls, installation, source discovery, permission and navigation checks, pagination, partial results, retries, collection identity, Maps fields, and temporary-tab cleanup. Live checks verified Instagram collection discovery and pagination, Events and Date Spots contents, and Maps list discovery and list-to-place traversal. Updated place-detail extraction has regression coverage; its final live check requires an extension reload. Internal APIs and layouts can change; fixture tests do not prove every current account or layout is supported.
 
 ## Saved-post captions
 
@@ -164,11 +164,13 @@ Automated tests cover MCP stdio through the native host, fragmented messages, co
 2. Click the extension icon, then **Collect saved posts**. Keep both tabs open.
 3. Save as Text, JSON, HTML, Print / PDF, or ZIP.
 
-Each entry includes the full caption returned by Instagram, author, post link, and publication date. Posts without captions are retained. Leave the post limit blank to collect all available saved posts. The export keeps Instagram’s saved-feed order. Dates saved, comments, and photo/video downloads are not included. Agents can discover collections by name or supply a collection ID.
+Each entry includes the full caption returned by Instagram, author, post link, and publication date when available. Unknown publication dates are exported as null and labeled unavailable. Posts without captions are retained. Leave the post limit blank to collect all available saved posts. The export keeps Instagram’s saved-feed order. Dates saved, comments, and photo/video downloads are not included. Agents can discover collections by name or supply a collection ID.
 
 Pause and resume work in the same export tab. If a request fails, collected captions remain available as a partial archive. Reloading the export tab clears them.
 
-The saved-post adapter uses Instagram’s internal API and has automated fixture coverage, but has not yet been verified against a live signed-in account. Login prompts, rate limits, or API changes can stop collection.
+Named saved collections use Instagram’s observed GraphQL queries. Authenticated requests run inside the selected signed-in tab for both MCP and manual exports; authentication tokens stay in that page context. The extension background worker manages jobs and results. No extra cookies or webRequest permission is required. Live testing found extension-origin requests rejected with Instagram error 1357004, so the scraper does not attempt worker requests.
+
+The available feed can contain fewer posts than the collection’s displayed count, for example when posts are unavailable. MCP reports that coverage gap as partial. Login prompts, rate limits, or API changes can stop collection.
 
 ## Manual conversation exports
 

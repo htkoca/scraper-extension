@@ -1,5 +1,268 @@
+// src/instagram-api.js
+function instagramAccountContext() {
+  try {
+    if (location.origin !== "https://www.instagram.com")
+      throw new Error("Open a signed-in Instagram tab first.");
+    const viewerId = document.cookie.split(/;\s*/).find((c) => c.startsWith("ds_user_id="))?.slice(11);
+    if (!viewerId)
+      throw new Error("Sign in to Instagram in the selected browser tab.");
+    const ownProfile = [...document.querySelectorAll("a[href]")].find(
+      (link) => {
+        const path = new URL(link.href, location.origin).pathname;
+        return /^\/[A-Za-z0-9._]+\/$/.test(path) && /profile/i.test(
+          (link.getAttribute("aria-label") || "") + (link.querySelector("img")?.getAttribute("alt") || "") + link.textContent
+        );
+      }
+    );
+    const username = ownProfile && new URL(ownProfile.href, location.origin).pathname.split("/")[1];
+    return { ok: true, viewerId, username };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+async function instagramGraphqlRequest({
+  friendly,
+  fallbackId,
+  variables
+}) {
+  try {
+    if (location.origin !== "https://www.instagram.com")
+      throw new Error("Open a signed-in Instagram tab first.");
+    const scripts = [...document.scripts].map((s) => s.textContent || "").join("\n");
+    const token = (name) => {
+      try {
+        const value = window.require?.(name)?.token;
+        if (value) return value;
+      } catch {
+      }
+      return scripts.match(
+        new RegExp(
+          '"' + name + '"\\s*,\\s*\\[\\]\\s*,\\s*\\{\\s*"token"\\s*:\\s*"([^"\\n]+)"'
+        )
+      )?.[1];
+    };
+    const cookie = (name) => document.cookie.split(/;\s*/).find((c) => c.startsWith(name + "="))?.slice(name.length + 1);
+    const csrf = cookie("csrftoken"), viewerId = cookie("ds_user_id"), dtsg = token("DTSGInitialData"), lsd = token("LSD");
+    if (!csrf || !viewerId || !dtsg || !lsd)
+      throw new Error(
+        "Instagram authentication is still loading or requires sign-in. Refresh this tab and retry."
+      );
+    let queryId = fallbackId;
+    try {
+      queryId = window.require?.(friendly + ".graphql")?.params?.id || fallbackId;
+    } catch {
+    }
+    const response = await fetch("/api/graphql", {
+      method: "POST",
+      credentials: "include",
+      redirect: "error",
+      signal: AbortSignal.timeout(25e3),
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "X-CSRFToken": csrf,
+        "X-FB-Friendly-Name": friendly,
+        "X-FB-LSD": lsd,
+        "X-IG-App-ID": "936619743392459"
+      },
+      body: new URLSearchParams({
+        av: "0",
+        __d: "www",
+        __user: "0",
+        __a: "1",
+        __comet_req: "7",
+        fb_dtsg: dtsg,
+        lsd,
+        fb_api_caller_class: "RelayModern",
+        fb_api_req_friendly_name: friendly,
+        server_timestamps: "true",
+        doc_id: String(queryId),
+        variables: JSON.stringify(variables)
+      }).toString()
+    });
+    if (!response.ok)
+      return {
+        ok: false,
+        status: response.status,
+        retryAfter: response.headers.get("Retry-After"),
+        error: `Instagram source-tab request returned HTTP ${response.status}.`
+      };
+    const body = JSON.parse(
+      (await response.text()).replace(/^for \(;;\);/, "")
+    );
+    if (body.errors?.length)
+      throw new Error(
+        "Instagram GraphQL: " + body.errors.map((e) => e.message || "Unknown error").join("; ")
+      );
+    if (!body.data)
+      throw new Error(
+        `Instagram source-tab request returned no GraphQL data${typeof body.error === "number" ? " (code " + body.error + ")" : ""}.`
+      );
+    const ownProfile = [...document.querySelectorAll("a[href]")].find(
+      (link) => {
+        const path = new URL(link.href, location.origin).pathname;
+        return /^\/[A-Za-z0-9._]+\/$/.test(path) && /profile/i.test(
+          (link.getAttribute("aria-label") || "") + (link.querySelector("img")?.getAttribute("alt") || "") + link.textContent
+        );
+      }
+    );
+    const username = ownProfile && new URL(ownProfile.href, location.origin).pathname.split("/")[1];
+    return {
+      ok: true,
+      data: body.data,
+      viewerId,
+      username,
+      transport: "source-tab",
+      warnings: []
+    };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+var InstagramApi = class {
+  constructor({ execute }) {
+    this.execute = execute;
+  }
+  async graphql(tabId, friendly, fallbackId, variables) {
+    return this.execute(
+      tabId,
+      instagramGraphqlRequest,
+      { friendly, fallbackId, variables },
+      true
+    );
+  }
+  async discover(tabId, cursor) {
+    const friendly = "PolarisProfileSavedTabContentQuery";
+    const result = await this.graphql(tabId, friendly, "27584326974521636", {
+      collection_types: [
+        "ALL_MEDIA_AUTO_COLLECTION",
+        "PLAYLIST_AUTO_COLLECTION",
+        "MEDIA",
+        "AUDIO_AUTO_COLLECTION"
+      ],
+      first: 12,
+      ...cursor ? { after: cursor } : {}
+    });
+    if (!result.ok)
+      throw new Error(result.error || "Instagram collection discovery failed.");
+    const connection = result.data?.viewer?.collections_unified_with_auto_collections;
+    if (!Array.isArray(connection?.edges) || typeof connection.page_info?.has_next_page !== "boolean")
+      throw new Error(
+        "Instagram Saved collection response changed (transport=" + result.transport + "; data=" + Object.keys(result.data || {}).join(",") + "; viewer=" + Object.keys(result.data?.viewer || {}).join(",") + "). No complete discovery was reported."
+      );
+    if (!result.username)
+      throw new Error(
+        "Could not identify the signed-in Instagram profile from its navigation. Open your profile once, then retry."
+      );
+    const nodes = connection.edges.map(({ node }) => node).filter((node) => {
+      if (/^(?:IG|XDT)?(?:AllMedia|Audio|Playlist)AutoCollection$/.test(
+        node?.__typename || ""
+      ))
+        return false;
+      if (!node || !/^\d+$/.test(String(node.collection_id || node.id || "")) || typeof node.collection_name !== "string")
+        throw new Error(
+          "Instagram unsupported collection (type=" + node?.__typename + "; fields=" + Object.keys(node || {}).join(",") + "; transport=" + result.transport + "; " + (result.warnings || []).join(" ") + ")."
+        );
+      return true;
+    });
+    const candidates = nodes.map((node) => ({
+      id: String(node.collection_id || node.id || ""),
+      name: node.collection_name,
+      count: node.collection_media_count,
+      url: `https://www.instagram.com/${result.username}/saved/collection/${node.collection_id || node.id}/`
+    })).filter((item) => /^\d+$/.test(item.id) && typeof item.name === "string");
+    const nextCursor = connection.page_info.has_next_page ? connection.page_info.end_cursor : null;
+    if (connection.page_info.has_next_page && (!nextCursor || nextCursor === cursor))
+      throw new Error(
+        "Instagram collection discovery did not advance its cursor."
+      );
+    return {
+      ok: true,
+      candidates,
+      nextCursor,
+      transport: result.transport,
+      warnings: result.warnings
+    };
+  }
+  async context(tabId, collectionId, title) {
+    const account = await this.execute(tabId, instagramAccountContext, {});
+    return {
+      ok: true,
+      threadId: collectionId ? `saved-${account.viewerId}-${collectionId}` : `saved-${account.viewerId}`,
+      title: title || `Saved collection ${collectionId}`,
+      collectionId,
+      warnings: [
+        "Captions and post links only. Publication dates unavailable in the saved collection API are left unknown. Media downloads are not included."
+      ]
+    };
+  }
+  async posts(tabId, collectionId, cursor, expectedIdentity) {
+    if (!/^\d+$/.test(collectionId || ""))
+      throw new Error(
+        "Choose a named saved collection; All posts is not supported by this query."
+      );
+    const result = await this.graphql(
+      tabId,
+      "PolarisSavedCollectionPageWWWQuery",
+      "39910535158594768",
+      {
+        after: cursor || null,
+        collection_id: collectionId,
+        first: 12,
+        __relay_internal__pv__PolarisShortDramaEnabledrelayprovider: true,
+        __relay_internal__pv__PolarisSEOIsCrawlerrelayprovider: false
+      }
+    );
+    if (!result.ok) return result;
+    if (expectedIdentity && expectedIdentity !== `saved-${result.viewerId}-${collectionId}`)
+      throw new Error(
+        "The Instagram account changed during collection. Prepare the source again."
+      );
+    const collection = result.data?.fetch__MediaCollection;
+    const connection = collection?.media;
+    if (!Array.isArray(connection?.edges) || typeof connection.page_info?.has_next_page !== "boolean" || String(collection.id) !== collectionId)
+      throw new Error(
+        "Instagram saved collection contents response changed or selected another collection."
+      );
+    const messages = connection.edges.map(({ node: post }) => {
+      if (!post || !/^\d+$/.test(String(post.pk || "")) || !/^[A-Za-z0-9_-]+$/.test(post.code || "") || post.caption != null && typeof post.caption.text !== "string")
+        throw new Error("Instagram returned unsupported saved-post metadata.");
+      const caption = post.caption?.text || "";
+      return {
+        id: String(post.pk),
+        timestamp: Number.isFinite(post.taken_at) ? post.taken_at * 1e3 : null,
+        sender: post.user?.username || "Unknown author",
+        senderId: String(post.user?.pk || ""),
+        isMe: false,
+        text: caption,
+        caption,
+        url: `https://www.instagram.com/p/${post.code}/`,
+        type: "saved-post",
+        attachments: [],
+        reactions: [],
+        raw: { code: post.code, media_type: post.media_type }
+      };
+    });
+    const info = connection.page_info;
+    if (info.has_next_page && (!info.end_cursor || info.end_cursor === cursor))
+      throw new Error(
+        "Instagram saved-post pagination did not advance its cursor."
+      );
+    return {
+      ok: true,
+      page: {
+        messages,
+        hasMore: info.has_next_page,
+        nextCursor: info.end_cursor || null
+      },
+      title: collection.name,
+      transport: result.transport,
+      warnings: result.warnings
+    };
+  }
+};
+
 // src/discovery.js
-async function discoverRequest({ service, cursor }) {
+async function discoverRequest({ service, cursor, select }) {
   try {
     if (service === "whatsapp") {
       if (location.origin !== "https://web.whatsapp.com")
@@ -7,9 +270,11 @@ async function discoverRequest({ service, cursor }) {
       const store = window.require?.("WAWebCollections");
       if (!store?.Chat?.getModelsArray)
         throw new Error("WhatsApp is still loading or needs QR login.");
+      const chats = store.Chat.getModelsArray();
+      if (!chats.length) return { ok: true, pending: true, candidates: [] };
       return {
         ok: true,
-        candidates: store.Chat.getModelsArray().map((chat) => ({
+        candidates: chats.map((chat) => ({
           id: chat.id?._serialized,
           name: chat.formattedTitle || chat.name || chat.id?._serialized,
           url: "https://web.whatsapp.com/"
@@ -38,10 +303,57 @@ async function discoverRequest({ service, cursor }) {
           headers: { "X-CSRFToken": csrf, "X-IG-App-ID": "936619743392459" }
         }
       );
-      if (!response.ok)
+      if (!response.ok) {
+        if (saved && response.status === 404) {
+          const links = [...document.querySelectorAll("a[href]")];
+          const collections = links.map((link) => {
+            const url = new URL(link.href, location.origin);
+            const match = /^\/[^/]+\/saved\/(?:[^/]+\/)?(\d+)\/?$/.exec(
+              url.pathname
+            );
+            return match && url.origin === location.origin ? {
+              id: match[1],
+              url: url.href,
+              name: (link.getAttribute("aria-label") || link.textContent).trim()
+            } : null;
+          }).filter((item) => item && item.name);
+          if (collections.length)
+            return {
+              ok: true,
+              candidates: [
+                ...new Map(collections.map((item) => [item.id, item])).values()
+              ],
+              nextCursor: null,
+              warnings: [
+                "Instagram collection API is unavailable. Only collections rendered on the Saved page were discovered; coverage is unverified."
+              ]
+            };
+          const savedLink = links.find((link) => {
+            const url = new URL(link.href, location.origin);
+            return !url.hash && /^\/[^/]+\/saved\/?$/.test(url.pathname);
+          });
+          const profileLink = links.find((link) => {
+            const path = new URL(link.href, location.origin).pathname;
+            return !new URL(link.href, location.origin).hash && /^\/[A-Za-z0-9._]+\/$/.test(path) && /profile/i.test(
+              (link.getAttribute("aria-label") || "") + link.textContent
+            );
+          });
+          const target = savedLink?.href || profileLink && new URL("saved/", profileLink.href).href;
+          if (target && new URL(target).origin === location.origin && new URL(target).pathname !== location.pathname)
+            return {
+              ok: true,
+              navigate: target,
+              pending: true,
+              candidates: []
+            };
+          throw new Error(
+            "Instagram collection API returned HTTP 404 and no collection links are rendered. Open your profile's Saved page and retry."
+          );
+        }
         throw new Error(
           `Instagram discovery returned HTTP ${response.status}.`
         );
+      }
       const body = await response.json();
       const items = saved ? body.items : body.inbox?.threads;
       if (body.status !== "ok" || !Array.isArray(items))
@@ -92,32 +404,75 @@ async function discoverRequest({ service, cursor }) {
         throw new Error("Unexpected Maps origin.");
       if (/accounts\.google\.com/.test(location.href))
         throw new Error("Sign in to Google Maps.");
-      const candidates = [...document.querySelectorAll("a[href]")].filter((link) => /placelists\/list\/|!11m/.test(link.href)).map((link) => ({
-        id: link.href,
-        url: link.href,
-        name: link.getAttribute("aria-label") || link.textContent.trim()
-      })).filter((item) => item.name);
+      const label = (el) => {
+        if (el.getAttribute("aria-label"))
+          return el.getAttribute("aria-label").trim();
+        const copy = el.cloneNode(true);
+        copy.querySelectorAll(
+          '[aria-hidden="true"],svg,.google-symbols,.material-icons'
+        ).forEach((node) => node.remove());
+        return copy.textContent.replace(/\s+/g, " ").trim();
+      };
+      const buttons = [...document.querySelectorAll('button,[role="button"]')];
+      if (select) {
+        const matches = buttons.filter((button) => label(button) === select);
+        if (matches.length !== 1)
+          throw new Error(
+            "The saved list selection changed or is ambiguous. Discover sources again."
+          );
+        const before = location.href;
+        if (typeof MouseEvent !== "undefined")
+          matches[0].dispatchEvent(
+            new MouseEvent("click", {
+              bubbles: true,
+              cancelable: true,
+              view: window,
+              button: 0,
+              detail: 1
+            })
+          );
+        else matches[0].click();
+        return {
+          ok: true,
+          pending: location.href === before,
+          url: location.href !== before ? location.href : void 0
+        };
+      }
+      const candidates = [...document.querySelectorAll("a[href]")].filter((link) => {
+        const target = new URL(link.href, location.href);
+        return target.origin === location.origin && target.pathname.startsWith("/maps") && /placelists\/list\/|!11m/.test(target.pathname);
+      }).map((link) => ({ id: link.href, url: link.href, name: label(link) })).filter((item) => item.name);
+      for (const button of buttons) {
+        const text = label(button);
+        const title = button.querySelector(".fontBodyLarge")?.textContent.trim();
+        const metadata = button.querySelector(".fontBodyMedium")?.textContent.trim();
+        const match = /^(.*?)\s*(?:Private|Shared)\s*[·•]\s*[\d,]+\s*places?$/i.exec(text);
+        const card = title && /^(?:Private|Shared)\s*[·•]\s*[\d,]+\s*places?$/i.test(
+          metadata || ""
+        );
+        if (match || card)
+          candidates.push({
+            id: text,
+            name: card ? title : match[1],
+            url: location.href,
+            select: text
+          });
+      }
       if (candidates.length)
         return {
           ok: true,
           candidates: [
-            ...new Map(candidates.map((item) => [item.url, item])).values()
+            ...new Map(candidates.map((item) => [item.id, item])).values()
           ],
           nextCursor: null
         };
-      const saved = [
-        ...document.querySelectorAll('button,[role="button"]')
-      ].find(
-        (el) => /^(Saved|Your places)$/i.test(
-          el.getAttribute("aria-label") || el.textContent.trim()
-        )
-      );
+      const saved = document.querySelector('button[jsaction="navigationrail.saved"]') || buttons.find((el) => /^(Saved|Your places)$/i.test(label(el)));
       if (saved) {
         saved.click();
         return { ok: true, pending: true, candidates: [] };
       }
       throw new Error(
-        "Maps did not expose saved-list links. Supply the saved list URL, or open Saved in Maps once."
+        "Maps did not expose saved-list links or buttons. Supply the saved list URL, or open Saved in Maps once."
       );
     }
     throw new Error("Unsupported service.");
@@ -160,40 +515,113 @@ async function instagramSavedRequest(request) {
         title: collectionId ? `Saved collection ${collectionId}` : "Saved posts",
         collectionId: collectionId || null,
         warnings: [
-          "Captions and post links only. Dates are publication dates, not dates saved. Posts without captions are retained."
+          "Captions and post links only. Unavailable publication dates are left unknown. Posts without captions are retained."
         ]
       };
-    if (request.kind === "collections") {
-      const params2 = new URLSearchParams({
-        collection_types: '["ALL_MEDIA_AUTO_COLLECTION","MEDIA"]'
-      });
-      if (request.cursor) params2.set("max_id", request.cursor);
-      const response2 = await fetch("/api/v1/collections/list/?" + params2, {
+    const graphql = async (friendly, fallbackId, variables) => {
+      const scripts = Array.from(
+        document.scripts || [],
+        (script) => script.textContent || ""
+      ).join("\n");
+      const token = (name) => {
+        try {
+          const value = window.require?.(name)?.token;
+          if (value) return value;
+        } catch {
+        }
+        return scripts.match(
+          new RegExp(
+            '"' + name + '"\\s*,\\s*\\[\\]\\s*,\\s*\\{\\s*"token"\\s*:\\s*"([^"\\n]+)"'
+          )
+        )?.[1];
+      };
+      const dtsg = token("DTSGInitialData"), lsd = token("LSD");
+      if (!dtsg || !lsd)
+        throw new Error(
+          "Instagram authentication is still loading. Refresh the selected tab and retry."
+        );
+      let queryId = fallbackId;
+      try {
+        queryId = window.require?.(friendly + ".graphql")?.params?.id || fallbackId;
+      } catch {
+      }
+      const response = await fetch("/api/graphql", {
+        method: "POST",
         credentials: "include",
         redirect: "error",
         signal: AbortSignal.timeout(25e3),
-        headers: { "X-CSRFToken": csrf, "X-IG-App-ID": "936619743392459" }
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "X-CSRFToken": csrf,
+          "X-FB-Friendly-Name": friendly,
+          "X-FB-LSD": lsd,
+          "X-IG-App-ID": "936619743392459"
+        },
+        body: new URLSearchParams({
+          av: "0",
+          __d: "www",
+          __user: "0",
+          __a: "1",
+          __comet_req: "7",
+          fb_dtsg: dtsg,
+          lsd,
+          fb_api_caller_class: "RelayModern",
+          fb_api_req_friendly_name: friendly,
+          server_timestamps: "true",
+          doc_id: String(queryId),
+          variables: JSON.stringify(variables)
+        }).toString()
       });
-      if (!response2.ok)
+      if (!response.ok)
+        return {
+          ok: false,
+          status: response.status,
+          retryAfter: response.headers.get("Retry-After"),
+          error: `Instagram source-tab request returned HTTP ${response.status}.`
+        };
+      const body2 = await response.json();
+      if (body2.errors?.length || !body2.data)
         throw new Error(
-          `Instagram returned HTTP ${response2.status} while listing collections.`
+          "Instagram did not return the requested saved collection data."
         );
-      const body2 = await response2.json();
-      if (body2.status !== "ok" || !Array.isArray(body2.items))
-        throw new Error("Instagram returned an unsupported collection list.");
-      const collections = body2.items.map((item) => ({
-        id: String(item.collection_id || item.id || ""),
-        name: item.collection_name || item.name,
-        count: Number.isSafeInteger(item.collection_media_count) ? item.collection_media_count : null
-      })).filter(
-        (item) => /^\d+$/.test(item.id) && typeof item.name === "string"
+      return { ok: true, data: body2.data };
+    };
+    if (request.kind === "collections") {
+      const result = await graphql(
+        "PolarisProfileSavedTabContentQuery",
+        "27584326974521636",
+        {
+          collection_types: [
+            "ALL_MEDIA_AUTO_COLLECTION",
+            "PLAYLIST_AUTO_COLLECTION",
+            "MEDIA",
+            "AUDIO_AUTO_COLLECTION"
+          ],
+          first: 12,
+          ...request.cursor ? { after: request.cursor } : {}
+        }
       );
-      if (collections.length !== body2.items.length)
-        throw new Error("A collection is missing its name or numeric ID.");
-      const nextCursor = body2.more_available ? body2.next_max_id || body2.max_id : null;
-      if (body2.more_available && (!nextCursor || nextCursor === request.cursor))
+      if (!result.ok) return result;
+      const connection = result.data.viewer?.collections_unified_with_auto_collections;
+      if (!Array.isArray(connection?.edges) || typeof connection.page_info?.has_next_page !== "boolean")
+        throw new Error("Instagram returned an unsupported collection list.");
+      const collections = connection.edges.map(({ node }) => node).filter(
+        (node) => !/^(?:IG|XDT)?(?:AllMedia|Audio|Playlist)AutoCollection$/.test(
+          node?.__typename || ""
+        )
+      ).map((node) => {
+        if (!node || !/^\d+$/.test(String(node.collection_id || node.id || "")) || typeof node.collection_name !== "string")
+          throw new Error("A collection is missing its name or numeric ID.");
+        return {
+          id: String(node.collection_id || node.id),
+          name: node.collection_name,
+          count: Number.isSafeInteger(node.collection_media_count) ? node.collection_media_count : null
+        };
+      });
+      const nextCursor = connection.page_info.has_next_page ? connection.page_info.end_cursor : null;
+      if (connection.page_info.has_next_page && (!nextCursor || nextCursor === request.cursor))
         throw new Error("Instagram repeated a collection cursor.");
-      return { ok: true, collections, nextCursor: nextCursor || null };
+      return { ok: true, collections, nextCursor, transport: "source-tab" };
     }
     if (request.kind !== "messages")
       throw new Error("Unsupported saved-post request.");
@@ -203,26 +631,50 @@ async function instagramSavedRequest(request) {
     });
     if (request.cursor) params.set("max_id", request.cursor);
     const endpoint = collectionId ? `/api/v1/feed/collection/${collectionId}/` : "/api/v1/feed/saved/posts/";
-    const response = await fetch(endpoint + "?" + params, {
-      credentials: "include",
-      redirect: "error",
-      signal: AbortSignal.timeout(25e3),
-      headers: { "X-CSRFToken": csrf, "X-IG-App-ID": "936619743392459" }
-    });
-    if (!response.ok)
-      return {
-        ok: false,
-        status: response.status,
-        retryAfter: response.headers.get("Retry-After"),
-        error: `Instagram returned HTTP ${response.status} while loading saved posts.`
-      };
     let body;
-    try {
-      body = await response.json();
-    } catch {
-      throw new Error(
-        "Instagram returned a non-JSON response. Check your login or account prompts."
+    if (collectionId) {
+      const result = await graphql(
+        "PolarisSavedCollectionPageWWWQuery",
+        "39910535158594768",
+        {
+          after: request.cursor || null,
+          collection_id: collectionId,
+          first: 12,
+          __relay_internal__pv__PolarisShortDramaEnabledrelayprovider: true,
+          __relay_internal__pv__PolarisSEOIsCrawlerrelayprovider: false
+        }
       );
+      if (!result.ok) return result;
+      const collection = result.data.fetch__MediaCollection, media = collection?.media;
+      if (String(collection?.id) !== collectionId || !Array.isArray(media?.edges) || typeof media.page_info?.has_next_page !== "boolean")
+        throw new Error("Instagram saved collection contents changed.");
+      body = {
+        status: "ok",
+        items: media.edges.map(({ node }) => node),
+        more_available: media.page_info.has_next_page,
+        next_max_id: media.page_info.end_cursor
+      };
+    } else {
+      const response = await fetch(endpoint + "?" + params, {
+        credentials: "include",
+        redirect: "error",
+        signal: AbortSignal.timeout(25e3),
+        headers: { "X-CSRFToken": csrf, "X-IG-App-ID": "936619743392459" }
+      });
+      if (!response.ok)
+        return {
+          ok: false,
+          status: response.status,
+          retryAfter: response.headers.get("Retry-After"),
+          error: `Instagram returned HTTP ${response.status} while loading saved posts.`
+        };
+      try {
+        body = await response.json();
+      } catch {
+        throw new Error(
+          "Instagram returned a non-JSON response. Check your login or account prompts."
+        );
+      }
     }
     if (body.status !== "ok" || !Array.isArray(body.items) || typeof body.more_available !== "boolean")
       throw new Error(
@@ -231,7 +683,7 @@ async function instagramSavedRequest(request) {
     const messages = body.items.map((item) => {
       const post = item.media || item;
       const id = String(post.pk || post.id || "");
-      if (!id || !/^[A-Za-z0-9_-]+$/.test(post.code || "") || !Number.isFinite(post.taken_at) || post.taken_at < 0 || post.caption != null && typeof post.caption.text !== "string")
+      if (!id || !/^[A-Za-z0-9_-]+$/.test(post.code || "") || !(collectionId && post.taken_at === void 0) && (!Number.isFinite(post.taken_at) || post.taken_at < 0) || post.caption != null && typeof post.caption.text !== "string")
         throw new Error(
           "A saved post has unsupported caption or metadata fields. Collection paused."
         );
@@ -240,7 +692,7 @@ async function instagramSavedRequest(request) {
       const author = post.user?.username || "Unknown author";
       return {
         id,
-        timestamp: post.taken_at * 1e3,
+        timestamp: Number.isFinite(post.taken_at) ? post.taken_at * 1e3 : null,
         sender: author,
         senderId: String(post.user?.pk || ""),
         isMe: false,
@@ -416,6 +868,9 @@ function createSession(options) {
   };
 }
 function acceptPage(session, connection) {
+  const saved = session.options.platform === "instagram-saved";
+  if (saved && (session.options.start != null || session.options.end != null))
+    throw new Error("Date filters are unavailable for saved posts.");
   if (!Array.isArray(connection?.messages) || typeof connection.hasMore !== "boolean")
     throw new Error("Unsupported conversation response.");
   const next = connection.nextCursor;
@@ -430,18 +885,19 @@ function acceptPage(session, connection) {
     );
   const normalized = connection.messages;
   for (const message of normalized) {
-    if (!message.id || !Number.isFinite(message.timestamp) || message.timestamp < 0)
+    const unknownDate = saved && message.timestamp === null;
+    if (!message.id || !unknownDate && (!Number.isFinite(message.timestamp) || message.timestamp < 0))
       throw new Error(
         "A message has an invalid ID or timestamp. Collection paused."
       );
   }
   let older = false, limitReached = false;
   for (const message of normalized) {
-    if (session.options.start !== null && message.timestamp < session.options.start) {
+    if (session.options.start != null && message.timestamp < session.options.start) {
       older = true;
       continue;
     }
-    if (session.options.end !== null && message.timestamp > session.options.end)
+    if (session.options.end != null && message.timestamp > session.options.end)
       continue;
     if (session.seen.has(message.id)) continue;
     if (session.options.limit && session.messages.length >= session.options.limit) {
@@ -711,6 +1167,19 @@ function getPlatform(id = "instagram") {
 }
 
 // src/sources.js
+function sameSourceUrl(first, second) {
+  if (first === second) return true;
+  try {
+    const a = new URL(first);
+    const b = new URL(second);
+    const listId = (url) => /!11m\d+!2s([^!]+)/.exec(url.href)?.[1] || /\/placelists\/list\/([^/?]+)/.exec(url.pathname)?.[1];
+    return Boolean(
+      sourceForUrl(first)?.id === "google-maps" && sourceForUrl(second)?.id === "google-maps" && a.origin === b.origin && listId(a) && listId(a) === listId(b)
+    );
+  } catch {
+    return false;
+  }
+}
 function sourceForUrl(value) {
   const platform = platformForUrl(value);
   if (platform)
@@ -776,26 +1245,73 @@ var SourceManager = class {
       throw new Error(`${error.message} Tab ${tab.id}.`);
     }
   }
+  async findTab(service, url) {
+    const tabs = await this.browser.tabs.query({});
+    return tabs.filter(
+      (tab) => this.matchesService(tab, service) && (!url || sameSourceUrl(tab.url, url))
+    ).sort(
+      (a, b) => Number(Boolean(a.discarded)) - Number(Boolean(b.discarded)) || Number(Boolean(b.active)) - Number(Boolean(a.active)) || (b.lastAccessed || 0) - (a.lastAccessed || 0)
+    )[0];
+  }
+  matchesService(tab, service) {
+    if (!tab || tab.incognito) return false;
+    try {
+      const url = new URL(tab.url);
+      return service.startsWith("instagram") ? url.origin === "https://www.instagram.com" : sourceForUrl(tab.url)?.id === service;
+    } catch {
+      return false;
+    }
+  }
   async discover({ service, cursor }) {
     await this.access(service);
     let tab;
     const existing = this.serviceTabs.get(service);
     if (existing) tab = await this.browser.tabs.get(existing).catch(() => null);
+    if (tab && !this.matchesService(tab, service)) tab = null;
     if (!tab) {
-      tab = await this.open(home[service]);
+      tab = await this.findTab(service) || await this.open(home[service]);
       this.serviceTabs.set(service, tab.id);
     }
     let result;
-    for (let i = 0; i < 3; i++) {
-      result = await this.service.execute(tab.id, discoverRequest, {
-        service,
-        cursor
-      });
+    let activated = false;
+    for (let i = 0; i < 10; i++) {
+      if (service === "google-maps" && i === 3 && this.browser.tabs.update) {
+        await this.browser.tabs.update(tab.id, { active: true });
+        activated = true;
+      }
+      result = service === "instagram-saved" && this.service.instagram ? await this.service.instagram.discover(tab.id, cursor) : await this.service.execute(
+        tab.id,
+        discoverRequest,
+        { service, cursor },
+        true
+      );
+      if (!result.ok && result.ok !== void 0) {
+        if (i < 9 && /did not expose|still loading|no collection links are rendered/i.test(
+          result.error || ""
+        )) {
+          await this.service.sleep(800);
+          continue;
+        }
+        throw new Error(
+          result.error || "The service could not discover sources."
+        );
+      }
+      if (result.navigate) {
+        const target = new URL(result.navigate);
+        if (target.origin !== "https://www.instagram.com" || !/^\/[^/]+\/saved\/?$/.test(target.pathname))
+          throw new Error("Unexpected discovery navigation.");
+        if (this.owned.has(tab.id))
+          await this.browser.tabs.update(tab.id, { url: target.href });
+        else {
+          tab = await this.open(target.href);
+          this.serviceTabs.set(service, tab.id);
+        }
+      }
       if (!result.pending) break;
       await this.service.sleep(800);
     }
     if (result.pending)
-      throw new Error("Maps Saved is still loading. Retry discover_sources.");
+      throw new Error("The service is still loading. Retry discover_sources.");
     const candidates = result.candidates.map((candidate) => {
       const candidateId = crypto.randomUUID();
       this.candidates.set(candidateId, {
@@ -805,7 +1321,9 @@ var SourceManager = class {
       });
       return {
         candidateId,
+        id: candidate.id,
         name: candidate.name,
+        count: candidate.count,
         users: candidate.users,
         service,
         url: candidate.url
@@ -814,8 +1332,12 @@ var SourceManager = class {
     return {
       candidates,
       nextCursor: result.nextCursor,
-      warnings: result.warnings || [],
-      tabId: tab.id
+      warnings: [
+        ...result.warnings || [],
+        ...activated ? ["Maps required activating its existing tab to render Saved lists."] : []
+      ],
+      tabId: tab.id,
+      transport: result.transport
     };
   }
   async prepare({ service, url, candidateId, name }) {
@@ -826,7 +1348,23 @@ var SourceManager = class {
         "Candidate expired or belongs to another service. Discover sources again."
       );
     if (!candidate && name) {
-      const found = await this.discover({ service });
+      let found = await this.discover({ service });
+      const seen = /* @__PURE__ */ new Set();
+      while (found.nextCursor && !seen.has(found.nextCursor)) {
+        seen.add(found.nextCursor);
+        if (seen.size > 100)
+          throw new Error("Source discovery exceeded its pagination limit.");
+        const page = await this.discover({ service, cursor: found.nextCursor });
+        found = {
+          ...page,
+          candidates: [...found.candidates, ...page.candidates],
+          warnings: [
+            .../* @__PURE__ */ new Set([...found.warnings || [], ...page.warnings || []])
+          ]
+        };
+      }
+      if (found.nextCursor)
+        throw new Error("Source discovery repeated its pagination cursor.");
       const query = name.replace(/^@/, "").toLocaleLowerCase();
       const matches = found.candidates.filter(
         (item) => [item.name, ...item.users || []].some(
@@ -841,7 +1379,31 @@ var SourceManager = class {
         };
       candidate = this.candidates.get(matches[0].candidateId);
     }
-    if (candidate) url = candidate.url;
+    if (candidate?.select) {
+      const result = await this.service.execute(
+        candidate.tabId,
+        discoverRequest,
+        {
+          service,
+          select: candidate.select
+        }
+      );
+      url = result.url;
+      if (result.pending) {
+        for (let attempt = 0; attempt < 30; attempt++) {
+          const current = await this.browser.tabs.get(candidate.tabId);
+          if (/placelists\/list\/|!11m/.test(new URL(current.url).pathname)) {
+            url = current.url;
+            break;
+          }
+          await this.service.sleep(200);
+        }
+        if (!url)
+          throw new Error(
+            "The selected Maps list did not open. Retry discovery."
+          );
+      }
+    } else if (candidate) url = candidate.url;
     if (url && (name || candidateId) && !candidate)
       throw new Error("Choose one target: URL, candidateId, or name.");
     if (!url)
@@ -851,7 +1413,31 @@ var SourceManager = class {
       throw new Error(
         "URL does not match the supported service and source type."
       );
-    const tab = service === "whatsapp" && candidate ? await this.browser.tabs.get(candidate.tabId) : await this.open(url);
+    if (service === "instagram-saved" && this.service.instagram) {
+      const collectionId = parsed.pathname.match(
+        /\/saved\/(?:[^/]+\/)?(\d+)\/?$/
+      )?.[1];
+      if (!collectionId)
+        throw new Error("Choose a named Instagram saved collection.");
+      const tab2 = candidate ? await this.browser.tabs.get(candidate.tabId) : await this.findTab(service) || await this.open(home[service]);
+      const sourceId2 = crypto.randomUUID();
+      this.service.sources.set(sourceId2, {
+        sourceId: sourceId2,
+        tabId: tab2.id,
+        url: tab2.url,
+        title: candidate?.name,
+        adapter: {
+          id: "instagram-saved",
+          operation: "saved_posts",
+          itemType: "post"
+        },
+        apiTarget: { collectionId, expectedCount: candidate?.count },
+        inUse: true,
+        managed: this.owned.has(tab2.id)
+      });
+      return this.service.describe(sourceId2);
+    }
+    const tab = service === "whatsapp" && candidate ? await this.browser.tabs.get(candidate.tabId) : await this.findTab(service, url) || await this.open(url);
     if (sourceForUrl(tab.url)?.id !== service)
       throw new Error(
         `The service redirected, possibly to login. Complete login in tab ${tab.id}, then retry.`
@@ -868,7 +1454,23 @@ var SourceManager = class {
       managed: this.owned.has(tab.id)
     });
     try {
-      return await this.service.describe(sourceId);
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const current = await this.browser.tabs.get(tab.id);
+        const source = this.service.sources.get(sourceId);
+        if (sourceForUrl(current.url)?.id !== service)
+          throw new Error(
+            "The service redirected outside the selected source."
+          );
+        source.url = current.url;
+        source.stale = false;
+        try {
+          return await this.service.describe(sourceId);
+        } catch (error) {
+          if (attempt === 9 || !/with its places visible|still loading/i.test(error.message))
+            throw error;
+          await this.service.sleep(500);
+        }
+      }
     } catch (error) {
       throw new Error(
         `${error.message} Background tab ${tab.id} is available if login is needed.`
@@ -883,7 +1485,10 @@ var SourceManager = class {
     ))
       throw new Error("Wait for or cancel the job before closing its source.");
     this.service.sources.delete(sourceId);
-    if (this.owned.delete(source.tabId)) {
+    const referenced = [...this.service.sources.values()].some(
+      (other) => other.tabId === source.tabId
+    );
+    if (!referenced && this.owned.delete(source.tabId)) {
       await this.browser.tabs.remove(source.tabId);
       for (const [key, id] of this.serviceTabs)
         if (id === source.tabId) this.serviceTabs.delete(key);
@@ -945,24 +1550,80 @@ async function mapsListRequest(request) {
     const url = new URL(location.href);
     if (url.protocol !== "https:" || !["www.google.com", "maps.google.com"].includes(url.hostname) || url.hostname === "www.google.com" && !url.pathname.startsWith("/maps"))
       throw new Error("Open a Google Maps saved list first.");
-    const heading = document.querySelector('[role="main"] h1, h1')?.textContent.trim();
+    const headingNode = document.querySelector(
+      'h1,[role="heading"][aria-level="1"]'
+    );
+    const heading = headingNode?.textContent.trim();
     const listUrl = /(?:placelists\/list\/|!11m)/.test(url.href);
-    const panel = document.querySelector('[role="feed"]') || [...document.querySelectorAll('[role="main"]')].find(
+    let panel = document.querySelector('[role="feed"]') || [...document.querySelectorAll('[role="main"]')].find(
       (el) => el.querySelector('a[href*="/maps/place/"]')
     );
-    if (!heading || !listUrl || document.querySelector('[data-item-id="address"]'))
+    const label = (el) => {
+      if (el.getAttribute("aria-label"))
+        return el.getAttribute("aria-label").trim();
+      const copy = el.cloneNode(true);
+      copy.querySelectorAll(
+        '[aria-hidden="true"],svg,.google-symbols,.material-icons'
+      ).forEach((node) => node.remove());
+      return copy.textContent.replace(/\s+/g, " ").trim();
+    };
+    const placeButtons = (root) => {
+      const all = [...root.querySelectorAll('button,[role="button"]')];
+      const places = /* @__PURE__ */ new Set();
+      const notes = [
+        ...all.filter((button) => label(button) === "Add note"),
+        ...root.querySelectorAll(
+          '[aria-label="Note"],textarea[placeholder="Note"]'
+        )
+      ];
+      for (const note of notes) {
+        let parent = note.parentElement;
+        for (let depth = 0; parent && depth < 4; depth++, parent = parent.parentElement) {
+          if (parent.querySelector('h1,[role="heading"][aria-level="1"]'))
+            break;
+          const buttons = [
+            ...parent.querySelectorAll('button,[role="button"]')
+          ];
+          const place = buttons.find((el) => label(el) !== "Add note");
+          if (place) {
+            places.add(place);
+            break;
+          }
+        }
+      }
+      return [...places];
+    };
+    if (!panel && headingNode) {
+      let parent = headingNode.parentElement;
+      while (parent && parent !== document.body) {
+        if (placeButtons(parent).length) {
+          panel = parent;
+          break;
+        }
+        parent = parent.parentElement;
+      }
+    }
+    if (!heading || !listUrl || !panel && !/0 places|no places|empty list/i.test(
+      document.body.innerText || document.body.textContent || ""
+    ) || document.querySelector('[data-item-id="address"]'))
       throw new Error(
         "Open the saved list itself, with its places visible, rather than a place detail or search."
       );
-    const fingerprint = `${location.href}#${heading}`;
+    const listIdentity = /!11m\d+!2s([^!]+)/.exec(url.href)?.[1] || /placelists\/list\/([^/?]+)/.exec(url.href)?.[1];
+    const fingerprint = `${url.origin}#${listIdentity || url.pathname}#${heading}`;
     if (request.fingerprint && request.fingerprint !== fingerprint)
       throw new Error(
         "The selected Maps list changed. Select the source again."
       );
     if (request.kind === "context")
-      return { ok: true, threadId: fingerprint, title: heading };
+      return {
+        ok: true,
+        threadId: fingerprint,
+        title: heading,
+        buttonLayout: Boolean(panel && placeButtons(panel).length)
+      };
     if (request.kind !== "entries") throw new Error("Unknown Maps request.");
-    const scroller = panel && [panel, ...panel.querySelectorAll("div")].filter(
+    let scroller = panel && [panel, ...panel.querySelectorAll("div")].filter(
       (el) => el.scrollHeight > el.clientHeight + 20 && el.clientHeight > 100
     ).sort((a, b) => b.scrollHeight - a.scrollHeight)[0];
     if (request.reset && scroller) {
@@ -981,16 +1642,68 @@ async function mapsListRequest(request) {
       const name = link.getAttribute("aria-label")?.trim() || link.textContent.trim();
       entries.push({ url: place.href, name: name || null });
     }
-    if (!entries.length && !/0 places|no places|empty list/i.test(document.body.innerText || ""))
+    if (!links.length && panel) {
+      const names = placeButtons(panel).map(label);
+      for (const name of names.filter((name2) => !request.resolvedNames?.includes(name2)).slice(0, request.limit || void 0)) {
+        let button = placeButtons(panel).find((el) => label(el) === name);
+        if (!button)
+          throw new Error(
+            "Maps changed its visible place rows while scanning."
+          );
+        button.click();
+        let destination;
+        for (let attempt = 0; attempt < 40; attempt++) {
+          if (location.pathname.startsWith("/maps/place/")) {
+            destination = location.href;
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        if (!destination)
+          throw new Error(`Maps did not expose the destination for ${name}.`);
+        history.back();
+        let restored = false;
+        for (let attempt = 0; attempt < 40; attempt++) {
+          const title = document.querySelector(
+            'h1,[role="heading"][aria-level="1"]'
+          );
+          let parent = title?.parentElement;
+          while (parent && parent !== document.body) {
+            if (placeButtons(parent).length) {
+              panel = parent;
+              break;
+            }
+            parent = parent.parentElement;
+          }
+          const returned = new URL(location.href);
+          const returnedId = /!11m\d+!2s([^!]+)/.exec(returned.href)?.[1] || /placelists\/list\/([^/?]+)/.exec(returned.pathname)?.[1];
+          if (returned.origin === url.origin && returnedId === listIdentity && title?.textContent.trim() === heading && panel?.isConnected && placeButtons(panel).length) {
+            restored = true;
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        if (!restored)
+          throw new Error("Maps did not return to the original saved list.");
+        const place = new URL(destination);
+        place.searchParams.set("hl", "en");
+        entries.push({ name, url: place.href });
+      }
+    }
+    if (!entries.length && !(panel && placeButtons(panel).length) && !/0 places|no places|empty list/i.test(document.body.innerText || ""))
       throw new Error(
         "No supported place links found. Load the list, or its layout may have changed."
       );
+    if (panel && !scroller?.isConnected)
+      scroller = [panel, ...panel.querySelectorAll("div")].filter(
+        (el) => el.scrollHeight > el.clientHeight + 20 && el.clientHeight > 100
+      ).sort((a, b) => b.scrollHeight - a.scrollHeight)[0];
     const before = scroller?.scrollTop || 0;
     const atEnd = !scroller || before + scroller.clientHeight >= scroller.scrollHeight - 5;
     if (scroller)
       scroller.scrollTop = before + Math.max(300, scroller.clientHeight * 0.8);
     const countText = (panel || document).innerText || (panel || document).textContent || "";
-    const expected = /([\d,]+)\s+places\b/i.exec(countText);
+    const expected = /([\d,]+)\s+places?\b/i.exec(countText);
     return {
       ok: true,
       entries,
@@ -1006,21 +1719,26 @@ async function mapsPlaceRequest() {
   if (!["www.google.com", "maps.google.com"].includes(location.hostname) || !location.pathname.startsWith("/maps/place/"))
     return { ok: false, error: "The place redirected outside Google Maps." };
   for (let attempt = 0; attempt < 30; attempt++) {
-    const title = document.querySelector("h1")?.textContent.trim();
-    const address = document.querySelector('[data-item-id="address"]')?.getAttribute("aria-label")?.replace(/^Address:\s*/i, "") || document.querySelector('[data-item-id="address"] .fontBodyMedium')?.textContent.trim();
+    const addressNode = document.querySelector('[data-item-id="address"]');
+    const details = addressNode?.closest('[role="main"]') || document;
+    const titleNode = [...details.querySelectorAll("h1")].at(-1);
+    const title = titleNode?.textContent.trim();
+    const address = (addressNode?.getAttribute("aria-label")?.replace(/^Address:\s*/i, "") || addressNode?.querySelector(".fontBodyMedium")?.textContent || "").trim();
     if (title && (address || attempt === 29)) {
-      const hoursButton = document.querySelector(
+      const hoursButton = details.querySelector(
         '[data-item-id="oh"], button[aria-label*="Show open hours"], [role="button"][aria-label*="Show open hours"]'
       );
       hoursButton?.click();
       if (hoursButton) await sleep(400);
-      const hours = [...document.querySelectorAll("table tr")].map((row) => {
+      const hours = [...details.querySelectorAll("table tr")].map((row) => {
         const cells = [...row.querySelectorAll("td")].map(
-          (el) => el.textContent.trim()
+          (el) => el.textContent.replace(new RegExp("\\p{Co}", "gu"), "").trim()
         );
-        return cells.length >= 2 ? { day: cells[0], hours: cells.slice(1).join(" ") } : null;
+        return cells.length >= 2 && /^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/i.test(
+          cells[0]
+        ) && cells.slice(1).some(Boolean) ? { day: cells[0], hours: cells.slice(1).join(" ") } : null;
       }).filter(Boolean);
-      const labels = [...document.querySelectorAll("[aria-label]")].map(
+      const labels = [...details.querySelectorAll("[aria-label]")].map(
         (el) => el.getAttribute("aria-label")
       );
       const ratingLabel = labels.find(
@@ -1065,15 +1783,24 @@ var ScrapeService = class {
     this.sleep = sleep;
     this.sources = /* @__PURE__ */ new Map();
     this.jobs = /* @__PURE__ */ new Map();
+    this.instagram = new InstagramApi({ execute: this.execute.bind(this) });
     this.manager = new SourceManager(this);
     browser.tabs.onUpdated.addListener((id, change) => {
-      if (change.status === "loading" || change.url) this.invalidate(id);
+      if (change.status === "loading") this.invalidate(id);
+      else if (change.url) {
+        for (const source of this.sources.values()) {
+          if (source.tabId !== id) continue;
+          if (source.apiTarget) continue;
+          if (sameSourceUrl(source.url, change.url)) source.url = change.url;
+          else source.stale = true;
+        }
+      }
     });
     browser.tabs.onRemoved.addListener((id) => this.invalidate(id));
   }
   invalidate(tabId) {
     for (const source of this.sources.values())
-      if (source.tabId === tabId) source.stale = true;
+      if (source.tabId === tabId && !source.apiTarget) source.stale = true;
   }
   async execute(tabId, func, request, allowFailure = false) {
     const [result] = await this.browser.scripting.executeScript({
@@ -1122,11 +1849,12 @@ var ScrapeService = class {
     const source = this.sources.get(sourceId);
     if (!source || source.stale)
       throw new Error("Source expired or changed. List tabs and select again.");
-    const tab = await this.browser.tabs.get(source.tabId);
-    if (tab.url !== source.url)
+    const tab = source.apiTarget ? null : await this.browser.tabs.get(source.tabId);
+    if (tab && !sameSourceUrl(tab.url, source.url))
       throw new Error(
         "The selected tab navigated. List tabs and select again."
       );
+    if (tab) source.url = tab.url;
     const origins = siteOrigins[source.adapter.id === "instagram-saved" ? "instagram" : source.adapter.id];
     if (!await this.browser.permissions.contains({ origins }))
       throw new Error(
@@ -1136,7 +1864,15 @@ var ScrapeService = class {
   }
   async describe(sourceId, options = {}) {
     const source = await this.selected(sourceId);
-    const context = await this.execute(
+    if (source.apiTarget && options.collectionId && options.collectionId !== source.apiTarget.collectionId)
+      throw new Error(
+        "Prepare the other saved collection before changing collectionId."
+      );
+    const context = source.apiTarget ? await this.instagram.context(
+      source.tabId,
+      options.collectionId || source.apiTarget.collectionId,
+      source.title
+    ) : await this.execute(
       source.tabId,
       source.adapter.id === "google-maps" ? mapsListRequest : getPlatform(source.adapter.id).request,
       {
@@ -1171,7 +1907,8 @@ var ScrapeService = class {
       progress: job.progress,
       error: job.error || null,
       warnings: job.warnings.slice(0, 100),
-      warningCount: job.warnings.length
+      warningCount: job.warnings.length,
+      transport: job.transport
     };
   }
   async start({ sourceId, options = {} }) {
@@ -1236,17 +1973,32 @@ var ScrapeService = class {
           },
           request: async (request) => {
             await this.check(job);
-            const result = await this.execute(
+            const result = job.source.apiTarget ? await this.instagram.posts(
+              job.source.tabId,
+              job.source.apiTarget.collectionId,
+              request.cursor,
+              job.source.context.threadId
+            ) : await this.execute(
               job.source.tabId,
               getPlatform(job.source.adapter.id).request,
               { ...request, targetId: job.source.targetId },
               true
             );
             await this.check(job);
+            for (const warning of result.warnings || [])
+              if (!job.warnings.includes(warning)) job.warnings.push(warning);
+            if (result.transport) job.transport = result.transport;
             return result;
           }
         });
       job.complete = job.source.adapter.id === "google-maps" ? job.listComplete : job.session.complete;
+      const expected = job.source.apiTarget?.expectedCount;
+      if (job.complete && Number.isSafeInteger(expected) && job.session.messages.length !== expected) {
+        job.warnings.push(
+          `The collection reports ${expected} posts, but its available API feed returned ${job.session.messages.length}. Coverage is incomplete; unavailable or removed posts may account for the difference.`
+        );
+        job.complete = false;
+      }
       job.state = job.complete ? "complete" : "partial";
       job.progress = job.complete ? "Finished" : "Finished with incomplete coverage";
     } catch (error) {
@@ -1255,6 +2007,36 @@ var ScrapeService = class {
     }
   }
   async collectMaps(job) {
+    let scanTab;
+    try {
+      if (!job.places && job.source.context.buttonLayout) {
+        scanTab = await this.manager.open(job.source.url);
+        for (let attempt = 0; attempt < 10; attempt++) {
+          const context = await this.execute(
+            scanTab.id,
+            mapsListRequest,
+            { kind: "context" },
+            true
+          );
+          if (context.ok) {
+            if (context.threadId !== job.source.context.threadId)
+              throw new Error("The scan tab opened a different Maps list.");
+            break;
+          }
+          if (attempt === 9) throw new Error(context.error);
+          await this.sleep(500, job.controller.signal);
+        }
+      }
+      await this.collectMapsFromTab(job, scanTab?.id || job.source.tabId);
+    } finally {
+      if (scanTab) {
+        this.manager.owned.delete(scanTab.id);
+        await this.browser.tabs.remove(scanTab.id).catch(() => {
+        });
+      }
+    }
+  }
+  async collectMapsFromTab(job, scanTabId) {
     const signal = job.controller.signal;
     if (!job.places) {
       const places = job.discoveredPlaces ||= /* @__PURE__ */ new Map();
@@ -1266,10 +2048,12 @@ var ScrapeService = class {
           throw new Error(
             "List discovery timed out. The job is partial; retry after Maps finishes loading."
           );
-        const page = await this.execute(job.source.tabId, mapsListRequest, {
+        const page = await this.execute(scanTabId, mapsListRequest, {
           kind: "entries",
           fingerprint: job.source.context.threadId,
-          reset: !job.scanStarted
+          reset: !job.scanStarted,
+          resolvedNames: [...places.values()].map((entry) => entry.name),
+          limit: job.options.limit ? job.options.limit - places.size : void 0
         });
         job.scanStarted = true;
         const previous = places.size;

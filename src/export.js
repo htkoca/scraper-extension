@@ -21,7 +21,7 @@ const savedPost = (
   author: sender,
   caption,
   url,
-  publishedAt: new Date(timestamp).toISOString(),
+  publishedAt: timestamp === null ? null : new Date(timestamp).toISOString(),
   ...(includeRaw ? { raw } : {}),
 });
 export function jsonReport(session) {
@@ -67,7 +67,7 @@ export function textReport(session) {
       "",
       ...session.messages.map(
         (post) =>
-          `@${post.sender} · Published ${new Date(post.timestamp).toLocaleString()}\n${post.url}\n${post.caption || "[No caption]"}\n`,
+          `@${post.sender} · ${post.timestamp === null ? "Publication date unavailable" : "Published " + new Date(post.timestamp).toLocaleString()}\n${post.url}\n${post.caption || "[No caption]"}\n`,
       ),
     ].join("\n");
   return [
@@ -102,8 +102,8 @@ export function htmlReport(session, embedded = new Map(), paths = new Map()) {
           return `<div>${image}<a href="${e(href)}" rel="noreferrer noopener" target="_blank">${e(a.type)} attachment${a.status === "failed" ? " (download failed)" : ""}</a></div>`;
         })
         .join("");
-      return `<article class="${m.isMe ? "mine" : ""}"><header><strong>${e(m.sender)}</strong> <time>${e(new Date(m.timestamp).toLocaleString())}</time></header><p>${e(m.text || (saved ? "[No caption]" : ""))}</p>${saved && /^https:\/\/www\.instagram\.com\/p\/[A-Za-z0-9_-]+\/$/.test(m.url) ? `<p><a href="${e(m.url)}" rel="noreferrer noopener" target="_blank">View post on Instagram</a></p>` : ""}${m.transcript ? `<p><strong>Transcript</strong><br>${e(m.transcript)}</p>` : ""}${media}${m.reactions?.length ? `<p class="muted">Reactions: ${e(JSON.stringify(m.reactions))}</p>` : ""}</article>`;
+      return `<article class="${m.isMe ? "mine" : ""}"><header><strong>${e(m.sender)}</strong> <time>${e(saved && m.timestamp === null ? "Publication date unavailable" : new Date(m.timestamp).toLocaleString())}</time></header><p>${e(m.text || (saved ? "[No caption]" : ""))}</p>${saved && /^https:\/\/www\.instagram\.com\/p\/[A-Za-z0-9_-]+\/$/.test(m.url) ? `<p><a href="${e(m.url)}" rel="noreferrer noopener" target="_blank">View post on Instagram</a></p>` : ""}${m.transcript ? `<p><strong>Transcript</strong><br>${e(m.transcript)}</p>` : ""}${media}${m.reactions?.length ? `<p class="muted">Reactions: ${e(JSON.stringify(m.reactions))}</p>` : ""}</article>`;
     })
     .join("\n");
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><title>${e(title)}</title><style>body{font:16px/1.6 system-ui,sans-serif;color:#18202d;background:#f3f5f8;margin:0;padding:32px}main{max-width:820px;margin:auto}h1{font-size:26px}article{background:white;border:1px solid #cfd7e3;border-radius:12px;padding:16px;margin:16px 0;break-inside:avoid}.mine{border-left:4px solid #2757be}p{white-space:pre-wrap;overflow-wrap:anywhere}time,.muted{color:#505d70}time{font-size:13px}img{display:block;max-width:100%;max-height:600px}a{color:#174aa5;overflow-wrap:anywhere}@media print{body{background:white;padding:0}article{border-radius:0}a{color:inherit}}</style></head><body><main><h1>${e(title)}</h1><p>${saved ? "Publication dates shown" : "Thread " + e(session.options.threadId)} · ${session.messages.length} ${saved ? "posts" : "messages"} · ${session.complete ? "Requested history complete" : "PARTIAL EXPORT"}</p>${session.warnings.map((w) => `<p>${e(w)}</p>`).join("")}${rows}</main></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><title>${e(title)}</title><style>body{font:16px/1.6 system-ui,sans-serif;color:#18202d;background:#f3f5f8;margin:0;padding:32px}main{max-width:820px;margin:auto}h1{font-size:26px}article{background:white;border:1px solid #cfd7e3;border-radius:12px;padding:16px;margin:16px 0;break-inside:avoid}.mine{border-left:4px solid #2757be}p{white-space:pre-wrap;overflow-wrap:anywhere}time,.muted{color:#505d70}time{font-size:13px}img{display:block;max-width:100%;max-height:600px}a{color:#174aa5;overflow-wrap:anywhere}@media print{body{background:white;padding:0}article{border-radius:0}a{color:inherit}}</style></head><body><main><h1>${e(title)}</h1><p>${saved ? "Publication dates shown where available" : "Thread " + e(session.options.threadId)} · ${session.messages.length} ${saved ? "posts" : "messages"} · ${session.complete ? "Requested history complete" : "PARTIAL EXPORT"}</p>${session.warnings.map((w) => `<p>${e(w)}</p>`).join("")}${rows}</main></body></html>`;
 }

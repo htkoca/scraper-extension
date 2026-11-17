@@ -41,6 +41,9 @@ export function createSession(options) {
 }
 
 export function acceptPage(session, connection) {
+  const saved = session.options.platform === "instagram-saved";
+  if (saved && (session.options.start != null || session.options.end != null))
+    throw new Error("Date filters are unavailable for saved posts.");
   if (
     !Array.isArray(connection?.messages) ||
     typeof connection.hasMore !== "boolean"
@@ -59,10 +62,11 @@ export function acceptPage(session, connection) {
   // Validate the whole page before advancing its checkpoint.
   const normalized = connection.messages;
   for (const message of normalized) {
+    const unknownDate = saved && message.timestamp === null;
     if (
       !message.id ||
-      !Number.isFinite(message.timestamp) ||
-      message.timestamp < 0
+      (!unknownDate &&
+        (!Number.isFinite(message.timestamp) || message.timestamp < 0))
     )
       throw new Error(
         "A message has an invalid ID or timestamp. Collection paused.",
@@ -72,13 +76,13 @@ export function acceptPage(session, connection) {
     limitReached = false;
   for (const message of normalized) {
     if (
-      session.options.start !== null &&
+      session.options.start != null &&
       message.timestamp < session.options.start
     ) {
       older = true;
       continue;
     }
-    if (session.options.end !== null && message.timestamp > session.options.end)
+    if (session.options.end != null && message.timestamp > session.options.end)
       continue;
     if (session.seen.has(message.id)) continue;
     if (

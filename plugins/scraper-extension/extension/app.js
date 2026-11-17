@@ -32,40 +32,113 @@ async function instagramSavedRequest(request2) {
         title: collectionId ? `Saved collection ${collectionId}` : "Saved posts",
         collectionId: collectionId || null,
         warnings: [
-          "Captions and post links only. Dates are publication dates, not dates saved. Posts without captions are retained."
+          "Captions and post links only. Unavailable publication dates are left unknown. Posts without captions are retained."
         ]
       };
-    if (request2.kind === "collections") {
-      const params2 = new URLSearchParams({
-        collection_types: '["ALL_MEDIA_AUTO_COLLECTION","MEDIA"]'
-      });
-      if (request2.cursor) params2.set("max_id", request2.cursor);
-      const response2 = await fetch("/api/v1/collections/list/?" + params2, {
+    const graphql = async (friendly, fallbackId, variables) => {
+      const scripts = Array.from(
+        document.scripts || [],
+        (script) => script.textContent || ""
+      ).join("\n");
+      const token = (name) => {
+        try {
+          const value = window.require?.(name)?.token;
+          if (value) return value;
+        } catch {
+        }
+        return scripts.match(
+          new RegExp(
+            '"' + name + '"\\s*,\\s*\\[\\]\\s*,\\s*\\{\\s*"token"\\s*:\\s*"([^"\\n]+)"'
+          )
+        )?.[1];
+      };
+      const dtsg = token("DTSGInitialData"), lsd = token("LSD");
+      if (!dtsg || !lsd)
+        throw new Error(
+          "Instagram authentication is still loading. Refresh the selected tab and retry."
+        );
+      let queryId = fallbackId;
+      try {
+        queryId = window.require?.(friendly + ".graphql")?.params?.id || fallbackId;
+      } catch {
+      }
+      const response = await fetch("/api/graphql", {
+        method: "POST",
         credentials: "include",
         redirect: "error",
         signal: AbortSignal.timeout(25e3),
-        headers: { "X-CSRFToken": csrf, "X-IG-App-ID": "936619743392459" }
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "X-CSRFToken": csrf,
+          "X-FB-Friendly-Name": friendly,
+          "X-FB-LSD": lsd,
+          "X-IG-App-ID": "936619743392459"
+        },
+        body: new URLSearchParams({
+          av: "0",
+          __d: "www",
+          __user: "0",
+          __a: "1",
+          __comet_req: "7",
+          fb_dtsg: dtsg,
+          lsd,
+          fb_api_caller_class: "RelayModern",
+          fb_api_req_friendly_name: friendly,
+          server_timestamps: "true",
+          doc_id: String(queryId),
+          variables: JSON.stringify(variables)
+        }).toString()
       });
-      if (!response2.ok)
+      if (!response.ok)
+        return {
+          ok: false,
+          status: response.status,
+          retryAfter: response.headers.get("Retry-After"),
+          error: `Instagram source-tab request returned HTTP ${response.status}.`
+        };
+      const body2 = await response.json();
+      if (body2.errors?.length || !body2.data)
         throw new Error(
-          `Instagram returned HTTP ${response2.status} while listing collections.`
+          "Instagram did not return the requested saved collection data."
         );
-      const body2 = await response2.json();
-      if (body2.status !== "ok" || !Array.isArray(body2.items))
-        throw new Error("Instagram returned an unsupported collection list.");
-      const collections = body2.items.map((item) => ({
-        id: String(item.collection_id || item.id || ""),
-        name: item.collection_name || item.name,
-        count: Number.isSafeInteger(item.collection_media_count) ? item.collection_media_count : null
-      })).filter(
-        (item) => /^\d+$/.test(item.id) && typeof item.name === "string"
+      return { ok: true, data: body2.data };
+    };
+    if (request2.kind === "collections") {
+      const result = await graphql(
+        "PolarisProfileSavedTabContentQuery",
+        "27584326974521636",
+        {
+          collection_types: [
+            "ALL_MEDIA_AUTO_COLLECTION",
+            "PLAYLIST_AUTO_COLLECTION",
+            "MEDIA",
+            "AUDIO_AUTO_COLLECTION"
+          ],
+          first: 12,
+          ...request2.cursor ? { after: request2.cursor } : {}
+        }
       );
-      if (collections.length !== body2.items.length)
-        throw new Error("A collection is missing its name or numeric ID.");
-      const nextCursor = body2.more_available ? body2.next_max_id || body2.max_id : null;
-      if (body2.more_available && (!nextCursor || nextCursor === request2.cursor))
+      if (!result.ok) return result;
+      const connection = result.data.viewer?.collections_unified_with_auto_collections;
+      if (!Array.isArray(connection?.edges) || typeof connection.page_info?.has_next_page !== "boolean")
+        throw new Error("Instagram returned an unsupported collection list.");
+      const collections = connection.edges.map(({ node }) => node).filter(
+        (node) => !/^(?:IG|XDT)?(?:AllMedia|Audio|Playlist)AutoCollection$/.test(
+          node?.__typename || ""
+        )
+      ).map((node) => {
+        if (!node || !/^\d+$/.test(String(node.collection_id || node.id || "")) || typeof node.collection_name !== "string")
+          throw new Error("A collection is missing its name or numeric ID.");
+        return {
+          id: String(node.collection_id || node.id),
+          name: node.collection_name,
+          count: Number.isSafeInteger(node.collection_media_count) ? node.collection_media_count : null
+        };
+      });
+      const nextCursor = connection.page_info.has_next_page ? connection.page_info.end_cursor : null;
+      if (connection.page_info.has_next_page && (!nextCursor || nextCursor === request2.cursor))
         throw new Error("Instagram repeated a collection cursor.");
-      return { ok: true, collections, nextCursor: nextCursor || null };
+      return { ok: true, collections, nextCursor, transport: "source-tab" };
     }
     if (request2.kind !== "messages")
       throw new Error("Unsupported saved-post request.");
@@ -75,26 +148,50 @@ async function instagramSavedRequest(request2) {
     });
     if (request2.cursor) params.set("max_id", request2.cursor);
     const endpoint = collectionId ? `/api/v1/feed/collection/${collectionId}/` : "/api/v1/feed/saved/posts/";
-    const response = await fetch(endpoint + "?" + params, {
-      credentials: "include",
-      redirect: "error",
-      signal: AbortSignal.timeout(25e3),
-      headers: { "X-CSRFToken": csrf, "X-IG-App-ID": "936619743392459" }
-    });
-    if (!response.ok)
-      return {
-        ok: false,
-        status: response.status,
-        retryAfter: response.headers.get("Retry-After"),
-        error: `Instagram returned HTTP ${response.status} while loading saved posts.`
-      };
     let body;
-    try {
-      body = await response.json();
-    } catch {
-      throw new Error(
-        "Instagram returned a non-JSON response. Check your login or account prompts."
+    if (collectionId) {
+      const result = await graphql(
+        "PolarisSavedCollectionPageWWWQuery",
+        "39910535158594768",
+        {
+          after: request2.cursor || null,
+          collection_id: collectionId,
+          first: 12,
+          __relay_internal__pv__PolarisShortDramaEnabledrelayprovider: true,
+          __relay_internal__pv__PolarisSEOIsCrawlerrelayprovider: false
+        }
       );
+      if (!result.ok) return result;
+      const collection = result.data.fetch__MediaCollection, media2 = collection?.media;
+      if (String(collection?.id) !== collectionId || !Array.isArray(media2?.edges) || typeof media2.page_info?.has_next_page !== "boolean")
+        throw new Error("Instagram saved collection contents changed.");
+      body = {
+        status: "ok",
+        items: media2.edges.map(({ node }) => node),
+        more_available: media2.page_info.has_next_page,
+        next_max_id: media2.page_info.end_cursor
+      };
+    } else {
+      const response = await fetch(endpoint + "?" + params, {
+        credentials: "include",
+        redirect: "error",
+        signal: AbortSignal.timeout(25e3),
+        headers: { "X-CSRFToken": csrf, "X-IG-App-ID": "936619743392459" }
+      });
+      if (!response.ok)
+        return {
+          ok: false,
+          status: response.status,
+          retryAfter: response.headers.get("Retry-After"),
+          error: `Instagram returned HTTP ${response.status} while loading saved posts.`
+        };
+      try {
+        body = await response.json();
+      } catch {
+        throw new Error(
+          "Instagram returned a non-JSON response. Check your login or account prompts."
+        );
+      }
     }
     if (body.status !== "ok" || !Array.isArray(body.items) || typeof body.more_available !== "boolean")
       throw new Error(
@@ -103,7 +200,7 @@ async function instagramSavedRequest(request2) {
     const messages = body.items.map((item) => {
       const post = item.media || item;
       const id = String(post.pk || post.id || "");
-      if (!id || !/^[A-Za-z0-9_-]+$/.test(post.code || "") || !Number.isFinite(post.taken_at) || post.taken_at < 0 || post.caption != null && typeof post.caption.text !== "string")
+      if (!id || !/^[A-Za-z0-9_-]+$/.test(post.code || "") || !(collectionId && post.taken_at === void 0) && (!Number.isFinite(post.taken_at) || post.taken_at < 0) || post.caption != null && typeof post.caption.text !== "string")
         throw new Error(
           "A saved post has unsupported caption or metadata fields. Collection paused."
         );
@@ -112,7 +209,7 @@ async function instagramSavedRequest(request2) {
       const author = post.user?.username || "Unknown author";
       return {
         id,
-        timestamp: post.taken_at * 1e3,
+        timestamp: Number.isFinite(post.taken_at) ? post.taken_at * 1e3 : null,
         sender: author,
         senderId: String(post.user?.pk || ""),
         isMe: false,
@@ -297,6 +394,9 @@ function createSession(options) {
   };
 }
 function acceptPage(session2, connection) {
+  const saved = session2.options.platform === "instagram-saved";
+  if (saved && (session2.options.start != null || session2.options.end != null))
+    throw new Error("Date filters are unavailable for saved posts.");
   if (!Array.isArray(connection?.messages) || typeof connection.hasMore !== "boolean")
     throw new Error("Unsupported conversation response.");
   const next = connection.nextCursor;
@@ -311,18 +411,19 @@ function acceptPage(session2, connection) {
     );
   const normalized = connection.messages;
   for (const message of normalized) {
-    if (!message.id || !Number.isFinite(message.timestamp) || message.timestamp < 0)
+    const unknownDate = saved && message.timestamp === null;
+    if (!message.id || !unknownDate && (!Number.isFinite(message.timestamp) || message.timestamp < 0))
       throw new Error(
         "A message has an invalid ID or timestamp. Collection paused."
       );
   }
   let older = false, limitReached = false;
   for (const message of normalized) {
-    if (session2.options.start !== null && message.timestamp < session2.options.start) {
+    if (session2.options.start != null && message.timestamp < session2.options.start) {
       older = true;
       continue;
     }
-    if (session2.options.end !== null && message.timestamp > session2.options.end)
+    if (session2.options.end != null && message.timestamp > session2.options.end)
       continue;
     if (session2.seen.has(message.id)) continue;
     if (session2.options.limit && session2.messages.length >= session2.options.limit) {
@@ -693,7 +794,7 @@ var savedPost = ({ id, sender, timestamp, caption, url, raw }, includeRaw) => ({
   author: sender,
   caption,
   url,
-  publishedAt: new Date(timestamp).toISOString(),
+  publishedAt: timestamp === null ? null : new Date(timestamp).toISOString(),
   ...includeRaw ? { raw } : {}
 });
 function jsonReport(session2) {
@@ -738,7 +839,7 @@ function textReport(session2) {
       ...session2.warnings,
       "",
       ...session2.messages.map(
-        (post) => `@${post.sender} \xB7 Published ${new Date(post.timestamp).toLocaleString()}
+        (post) => `@${post.sender} \xB7 ${post.timestamp === null ? "Publication date unavailable" : "Published " + new Date(post.timestamp).toLocaleString()}
 ${post.url}
 ${post.caption || "[No caption]"}
 `
@@ -767,9 +868,9 @@ function htmlReport(session2, embedded = /* @__PURE__ */ new Map(), paths = /* @
       const image = ["image", "gif"].includes(a.type) && (data || local) ? `<img alt="Attachment from ${e(m.sender)}" src="${e(data || local)}" loading="lazy">` : "";
       return `<div>${image}<a href="${e(href)}" rel="noreferrer noopener" target="_blank">${e(a.type)} attachment${a.status === "failed" ? " (download failed)" : ""}</a></div>`;
     }).join("");
-    return `<article class="${m.isMe ? "mine" : ""}"><header><strong>${e(m.sender)}</strong> <time>${e(new Date(m.timestamp).toLocaleString())}</time></header><p>${e(m.text || (saved ? "[No caption]" : ""))}</p>${saved && /^https:\/\/www\.instagram\.com\/p\/[A-Za-z0-9_-]+\/$/.test(m.url) ? `<p><a href="${e(m.url)}" rel="noreferrer noopener" target="_blank">View post on Instagram</a></p>` : ""}${m.transcript ? `<p><strong>Transcript</strong><br>${e(m.transcript)}</p>` : ""}${media2}${m.reactions?.length ? `<p class="muted">Reactions: ${e(JSON.stringify(m.reactions))}</p>` : ""}</article>`;
+    return `<article class="${m.isMe ? "mine" : ""}"><header><strong>${e(m.sender)}</strong> <time>${e(saved && m.timestamp === null ? "Publication date unavailable" : new Date(m.timestamp).toLocaleString())}</time></header><p>${e(m.text || (saved ? "[No caption]" : ""))}</p>${saved && /^https:\/\/www\.instagram\.com\/p\/[A-Za-z0-9_-]+\/$/.test(m.url) ? `<p><a href="${e(m.url)}" rel="noreferrer noopener" target="_blank">View post on Instagram</a></p>` : ""}${m.transcript ? `<p><strong>Transcript</strong><br>${e(m.transcript)}</p>` : ""}${media2}${m.reactions?.length ? `<p class="muted">Reactions: ${e(JSON.stringify(m.reactions))}</p>` : ""}</article>`;
   }).join("\n");
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><title>${e(title)}</title><style>body{font:16px/1.6 system-ui,sans-serif;color:#18202d;background:#f3f5f8;margin:0;padding:32px}main{max-width:820px;margin:auto}h1{font-size:26px}article{background:white;border:1px solid #cfd7e3;border-radius:12px;padding:16px;margin:16px 0;break-inside:avoid}.mine{border-left:4px solid #2757be}p{white-space:pre-wrap;overflow-wrap:anywhere}time,.muted{color:#505d70}time{font-size:13px}img{display:block;max-width:100%;max-height:600px}a{color:#174aa5;overflow-wrap:anywhere}@media print{body{background:white;padding:0}article{border-radius:0}a{color:inherit}}</style></head><body><main><h1>${e(title)}</h1><p>${saved ? "Publication dates shown" : "Thread " + e(session2.options.threadId)} \xB7 ${session2.messages.length} ${saved ? "posts" : "messages"} \xB7 ${session2.complete ? "Requested history complete" : "PARTIAL EXPORT"}</p>${session2.warnings.map((w) => `<p>${e(w)}</p>`).join("")}${rows}</main></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><title>${e(title)}</title><style>body{font:16px/1.6 system-ui,sans-serif;color:#18202d;background:#f3f5f8;margin:0;padding:32px}main{max-width:820px;margin:auto}h1{font-size:26px}article{background:white;border:1px solid #cfd7e3;border-radius:12px;padding:16px;margin:16px 0;break-inside:avoid}.mine{border-left:4px solid #2757be}p{white-space:pre-wrap;overflow-wrap:anywhere}time,.muted{color:#505d70}time{font-size:13px}img{display:block;max-width:100%;max-height:600px}a{color:#174aa5;overflow-wrap:anywhere}@media print{body{background:white;padding:0}article{border-radius:0}a{color:inherit}}</style></head><body><main><h1>${e(title)}</h1><p>${saved ? "Publication dates shown where available" : "Thread " + e(session2.options.threadId)} \xB7 ${session2.messages.length} ${saved ? "posts" : "messages"} \xB7 ${session2.complete ? "Requested history complete" : "PARTIAL EXPORT"}</p>${session2.warnings.map((w) => `<p>${e(w)}</p>`).join("")}${rows}</main></body></html>`;
 }
 
 // src/media.js

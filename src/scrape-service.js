@@ -1,5 +1,6 @@
+import { InstagramApi } from "./instagram-api.js";
 import { SourceManager } from "./source-manager.js";
-import { sourceForUrl, siteOrigins } from "./sources.js";
+import { sourceForUrl, sameSourceUrl, siteOrigins } from "./sources.js";
 import { getPlatform } from "./platforms.js";
 import { createSession } from "./model.js";
 import { fetchHistory, wait } from "./runner.js";
@@ -11,15 +12,24 @@ export class ScrapeService {
     this.sleep = sleep;
     this.sources = new Map();
     this.jobs = new Map();
+    this.instagram = new InstagramApi({ execute: this.execute.bind(this) });
     this.manager = new SourceManager(this);
     browser.tabs.onUpdated.addListener((id, change) => {
-      if (change.status === "loading" || change.url) this.invalidate(id);
+      if (change.status === "loading") this.invalidate(id);
+      else if (change.url) {
+        for (const source of this.sources.values()) {
+          if (source.tabId !== id) continue;
+          if (source.apiTarget) continue;
+          if (sameSourceUrl(source.url, change.url)) source.url = change.url;
+          else source.stale = true;
+        }
+      }
     });
     browser.tabs.onRemoved.addListener((id) => this.invalidate(id));
   }
   invalidate(tabId) {
     for (const source of this.sources.values())
-      if (source.tabId === tabId) source.stale = true;
+      if (source.tabId === tabId && !source.apiTarget) source.stale = true;
   }
   async execute(tabId, func, request, allowFailure = false) {
     const [result] = await this.browser.scripting.executeScript({
@@ -76,11 +86,14 @@ export class ScrapeService {
     const source = this.sources.get(sourceId);
     if (!source || source.stale)
       throw new Error("Source expired or changed. List tabs and select again.");
-    const tab = await this.browser.tabs.get(source.tabId);
-    if (tab.url !== source.url)
+    const tab = source.apiTarget
+      ? null
+      : await this.browser.tabs.get(source.tabId);
+    if (tab && !sameSourceUrl(tab.url, source.url))
       throw new Error(
         "The selected tab navigated. List tabs and select again.",
       );
+    if (tab) source.url = tab.url;
     const origins =
       siteOrigins[
         source.adapter.id === "instagram-saved"
@@ -95,17 +108,31 @@ export class ScrapeService {
   }
   async describe(sourceId, options = {}) {
     const source = await this.selected(sourceId);
-    const context = await this.execute(
-      source.tabId,
-      source.adapter.id === "google-maps"
-        ? mapsListRequest
-        : getPlatform(source.adapter.id).request,
-      {
-        kind: "context",
-        collectionId: options.collectionId,
-        targetId: source.targetId,
-      },
-    );
+    if (
+      source.apiTarget &&
+      options.collectionId &&
+      options.collectionId !== source.apiTarget.collectionId
+    )
+      throw new Error(
+        "Prepare the other saved collection before changing collectionId.",
+      );
+    const context = source.apiTarget
+      ? await this.instagram.context(
+          source.tabId,
+          options.collectionId || source.apiTarget.collectionId,
+          source.title,
+        )
+      : await this.execute(
+          source.tabId,
+          source.adapter.id === "google-maps"
+            ? mapsListRequest
+            : getPlatform(source.adapter.id).request,
+          {
+            kind: "context",
+            collectionId: options.collectionId,
+            targetId: source.targetId,
+          },
+        );
     if (
       source.context &&
       source.context.threadId !== context.threadId &&
@@ -142,6 +169,7 @@ export class ScrapeService {
       error: job.error || null,
       warnings: job.warnings.slice(0, 100),
       warningCount: job.warnings.length,
+      transport: job.transport,
     };
   }
   async start({ sourceId, options = {} }) {
@@ -224,13 +252,23 @@ export class ScrapeService {
           },
           request: async (request) => {
             await this.check(job);
-            const result = await this.execute(
-              job.source.tabId,
-              getPlatform(job.source.adapter.id).request,
-              { ...request, targetId: job.source.targetId },
-              true,
-            );
+            const result = job.source.apiTarget
+              ? await this.instagram.posts(
+                  job.source.tabId,
+                  job.source.apiTarget.collectionId,
+                  request.cursor,
+                  job.source.context.threadId,
+                )
+              : await this.execute(
+                  job.source.tabId,
+                  getPlatform(job.source.adapter.id).request,
+                  { ...request, targetId: job.source.targetId },
+                  true,
+                );
             await this.check(job);
+            for (const warning of result.warnings || [])
+              if (!job.warnings.includes(warning)) job.warnings.push(warning);
+            if (result.transport) job.transport = result.transport;
             return result;
           },
         });
@@ -238,6 +276,17 @@ export class ScrapeService {
         job.source.adapter.id === "google-maps"
           ? job.listComplete
           : job.session.complete;
+      const expected = job.source.apiTarget?.expectedCount;
+      if (
+        job.complete &&
+        Number.isSafeInteger(expected) &&
+        job.session.messages.length !== expected
+      ) {
+        job.warnings.push(
+          `The collection reports ${expected} posts, but its available API feed returned ${job.session.messages.length}. Coverage is incomplete; unavailable or removed posts may account for the difference.`,
+        );
+        job.complete = false;
+      }
       job.state = job.complete ? "complete" : "partial";
       job.progress = job.complete
         ? "Finished"
@@ -248,6 +297,35 @@ export class ScrapeService {
     }
   }
   async collectMaps(job) {
+    let scanTab;
+    try {
+      if (!job.places && job.source.context.buttonLayout) {
+        scanTab = await this.manager.open(job.source.url);
+        for (let attempt = 0; attempt < 10; attempt++) {
+          const context = await this.execute(
+            scanTab.id,
+            mapsListRequest,
+            { kind: "context" },
+            true,
+          );
+          if (context.ok) {
+            if (context.threadId !== job.source.context.threadId)
+              throw new Error("The scan tab opened a different Maps list.");
+            break;
+          }
+          if (attempt === 9) throw new Error(context.error);
+          await this.sleep(500, job.controller.signal);
+        }
+      }
+      await this.collectMapsFromTab(job, scanTab?.id || job.source.tabId);
+    } finally {
+      if (scanTab) {
+        this.manager.owned.delete(scanTab.id);
+        await this.browser.tabs.remove(scanTab.id).catch(() => {});
+      }
+    }
+  }
+  async collectMapsFromTab(job, scanTabId) {
     const signal = job.controller.signal;
     if (!job.places) {
       const places = (job.discoveredPlaces ||= new Map());
@@ -260,10 +338,14 @@ export class ScrapeService {
           throw new Error(
             "List discovery timed out. The job is partial; retry after Maps finishes loading.",
           );
-        const page = await this.execute(job.source.tabId, mapsListRequest, {
+        const page = await this.execute(scanTabId, mapsListRequest, {
           kind: "entries",
           fingerprint: job.source.context.threadId,
           reset: !job.scanStarted,
+          resolvedNames: [...places.values()].map((entry) => entry.name),
+          limit: job.options.limit
+            ? job.options.limit - places.size
+            : undefined,
         });
         job.scanStarted = true;
         const previous = places.size;

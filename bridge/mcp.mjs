@@ -9,6 +9,7 @@ import { connections, callBridge } from "./client.mjs";
 export function createMcpServer({
   discover = connections,
   call = callBridge,
+  connect = connectProfile,
 } = {}) {
   const server = new McpServer(
     { name: "scraper-extension", version: "0.3.0" },
@@ -61,6 +62,7 @@ export function createMcpServer({
       description:
         "List supported tabs across connected Chrome profiles, without scraping page content. Ask the user to choose from these tabs once. A new listing expires unused source IDs.",
       inputSchema: {
+        connectionId,
         allProfiles: z
           .boolean()
           .optional()
@@ -70,10 +72,20 @@ export function createMcpServer({
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ allProfiles }) => {
+    async ({ allProfiles, connectionId }) => {
+      if (allProfiles && connectionId)
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Choose connectionId or allProfiles, not both.",
+            },
+          ],
+        };
       const ids = allProfiles
         ? await discover()
-        : [(await connectProfile()).connectionId];
+        : [connectionId || (await connect()).connectionId];
       const results = await Promise.all(
         ids.map(async (id) => {
           try {
@@ -109,7 +121,7 @@ export function createMcpServer({
     },
     async ({ profile }) => {
       try {
-        return text(await connectProfile(profile));
+        return text(await connect(profile));
       } catch (error) {
         return {
           isError: true,
@@ -132,8 +144,7 @@ export function createMcpServer({
       },
       async ({ connectionId, ...params }) => {
         try {
-          const selected =
-            connectionId || (await connectProfile()).connectionId;
+          const selected = connectionId || (await connect()).connectionId;
           return text(await call(selected, name, params));
         } catch (error) {
           return {

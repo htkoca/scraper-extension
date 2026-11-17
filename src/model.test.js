@@ -116,3 +116,60 @@ test("date range rejects inversion and preserves optional endpoints", () => {
   assert.deepEqual(parseDateRange("", ""), { start: null, end: null });
   assert.throws(() => parseDateRange("2026-10-31", "2026-01-01"), /start date/);
 });
+
+test("saved posts preserve feed order and export explicitly unknown publication dates", () => {
+  const s = session({ platform: "instagram-saved" });
+  const post = (id, timestamp) => ({
+    id,
+    timestamp,
+    sender: "artist",
+    caption: "Exact caption",
+    text: "Exact caption",
+    url: `https://www.instagram.com/p/${id}/`,
+    attachments: [],
+    reactions: [],
+  });
+  acceptNormalizedPage(s, {
+    messages: [post("z", null), post("a", 1000)],
+    hasMore: true,
+    nextCursor: "next",
+  });
+  acceptNormalizedPage(s, {
+    messages: [post("a", 1000), post("b", null)],
+    hasMore: false,
+  });
+  assert.deepEqual(
+    s.messages.map((p) => p.id),
+    ["z", "a", "b"],
+  );
+  const json = JSON.parse(jsonReport(s));
+  assert.deepEqual(
+    json.posts.map((p) => p.publishedAt),
+    [null, "1970-01-01T00:00:01.000Z", null],
+  );
+  assert.match(textReport(s), /Publication date unavailable/);
+  assert.match(htmlReport(s), /Publication date unavailable/);
+  assert.ok(textReport(s).indexOf("/p/z/") < textReport(s).indexOf("/p/a/"));
+  assert.ok(htmlReport(s).indexOf("/p/z/") < htmlReport(s).indexOf("/p/a/"));
+});
+
+test("unknown dates remain invalid for conversations and saved posts reject date filters", () => {
+  const page = { messages: [{ id: "one", timestamp: null }], hasMore: false };
+  assert.throws(() => acceptNormalizedPage(session(), page), /timestamp/);
+  assert.throws(
+    () =>
+      acceptNormalizedPage(
+        session({ platform: "instagram-saved", start: 100 }),
+        page,
+      ),
+    /Date filters/,
+  );
+  assert.throws(
+    () =>
+      acceptNormalizedPage(session({ platform: "instagram-saved" }), {
+        ...page,
+        messages: [{ id: "one", timestamp: undefined }],
+      }),
+    /timestamp/,
+  );
+});

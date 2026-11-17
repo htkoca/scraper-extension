@@ -36869,7 +36869,8 @@ var StdioServerTransport = class {
 // bridge/mcp.mjs
 function createMcpServer({
   discover = connections,
-  call = callBridge
+  call = callBridge,
+  connect = connectProfile
 } = {}) {
   const server = new McpServer(
     { name: "scraper-extension", version: "0.3.0" },
@@ -36898,14 +36899,25 @@ function createMcpServer({
     {
       description: "List supported tabs across connected Chrome profiles, without scraping page content. Ask the user to choose from these tabs once. A new listing expires unused source IDs.",
       inputSchema: {
+        connectionId,
         allProfiles: external_exports.boolean().optional().describe(
           "Only use true when the user explicitly requests all profiles."
         )
       },
       annotations: { readOnlyHint: true, openWorldHint: false }
     },
-    async ({ allProfiles }) => {
-      const ids = allProfiles ? await discover() : [(await connectProfile()).connectionId];
+    async ({ allProfiles, connectionId: connectionId2 }) => {
+      if (allProfiles && connectionId2)
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Choose connectionId or allProfiles, not both."
+            }
+          ]
+        };
+      const ids = allProfiles ? await discover() : [connectionId2 || (await connect()).connectionId];
       const results = await Promise.all(
         ids.map(async (id) => {
           try {
@@ -36937,7 +36949,7 @@ function createMcpServer({
     },
     async ({ profile }) => {
       try {
-        return text(await connectProfile(profile));
+        return text(await connect(profile));
       } catch (error62) {
         return {
           isError: true,
@@ -36959,7 +36971,7 @@ function createMcpServer({
     },
     async ({ connectionId: connectionId2, ...params }) => {
       try {
-        const selected = connectionId2 || (await connectProfile()).connectionId;
+        const selected = connectionId2 || (await connect()).connectionId;
         return text(await call(selected, name, params));
       } catch (error62) {
         return {
