@@ -1,5 +1,6 @@
 import { getPlatform } from "./platforms.js";
 import { chronological, isMediaUrl } from "./model.js";
+import { isWhatsAppAudio } from "./whatsapp-media.js";
 export const escapeHtml = (value) =>
   String(value ?? "").replace(
     /[&<>"']/g,
@@ -91,6 +92,12 @@ export function htmlReport(session, embedded = new Map(), paths = new Map()) {
     .map((m) => {
       const media = m.attachments
         .map((a) => {
+          if (isWhatsAppAudio(a)) {
+            const local = paths.get(a.url);
+            if (local && /^attachments\/[\w-]+\.[a-z0-9]+$/.test(local))
+              return `<div><a href="${e(local)}" download>Download audio</a></div>`;
+            return `<p>Audio ${a.status === "failed" ? "download failed" : "files are available in the ZIP when downloaded"}.</p>`;
+          }
           if (!isMediaUrl(a.url)) return "";
           const data = embedded.get(a.url);
           const local = paths.get(a.url);

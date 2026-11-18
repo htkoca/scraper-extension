@@ -28,9 +28,13 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
         "The source tab changed platforms. Reconnect before collecting.",
       );
     if (
-      !["context", "messages", "transcription"].includes(message.request?.kind)
+      !["context", "messages", "transcription", "media"].includes(
+        message.request?.kind,
+      )
     )
       throw new Error("Unknown request.");
+    if (message.request.kind === "media" && platform.id !== "whatsapp")
+      throw new Error("Page audio downloads are only available for WhatsApp.");
     if (
       message.request.kind === "transcription" &&
       !platform.capabilities.transcribe

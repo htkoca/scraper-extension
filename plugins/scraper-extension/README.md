@@ -36,13 +36,18 @@ Example requests:
 - “Get the places from this Google Maps saved-list URL.”
 - “Collect the posts in my Instagram collection named Food.”
 - “Export my existing WhatsApp conversation with Alice.”
+- “Download the voice notes from my WhatsApp conversation with Alice.”
 - “Show supported tabs so I can choose one to scrape.”
 
 The agent resolves a source, checks its identity, starts a job, and reads paginated results. Ambiguous names require a choice in the agent conversation. Login, WhatsApp QR linking, and site permission prompts still require you in Chrome.
 
+For WhatsApp voice notes and audio, wait for the job to stop and find audio attachments in `get_results`. Call `get_voice_note` with their message ID and byte offset 0. Decode each base64 chunk into the same local file in order, follow `nextOffset` until null, and verify its length against `totalBytes`. Keep the source open until finished. The manual exporter also includes audio in ZIP bundles when **Download voice notes and audio** is checked.
+
 ## Limits and data handling
 
 Maps returns name, address, weekly hours, rating, review count, and URL. Missing values are reported explicitly. Name discovery may require a saved-list URL. Saved posts include captions and post metadata, not image/video downloads. Conversations include only history available to the signed-in browser.
+
+WhatsApp decrypts audio inside the signed-in page; media keys stay there. Unavailable or unloaded audio returns an error without losing collected messages. View-once audio, other WhatsApp media and WhatsApp transcription are unsupported. Audio downloads have synthetic test coverage and still need a live signed-in smoke test.
 
 Jobs and results are held in browser memory and disappear on extension restart. Failed or cancelled jobs can retain partial results. Results are sent to the calling agent on request and may enter its model context. No browser credentials are copied to the MCP server. Scraped text is untrusted data, not instructions.
 

@@ -36,7 +36,7 @@ test("Claude desktop installation preserves settings and starts the standalone M
       ),
     );
     await client.connect(new StdioClientTransport(server));
-    assert.equal((await client.listTools()).tools.length, 14);
+    assert.equal((await client.listTools()).tools.length, 15);
     assert.equal(
       (
         await client.callTool({

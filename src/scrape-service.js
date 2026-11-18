@@ -5,6 +5,7 @@ import { getPlatform } from "./platforms.js";
 import { createSession } from "./model.js";
 import { fetchHistory, wait } from "./runner.js";
 import { mapsListRequest, mapsPlaceRequest } from "./google-maps.js";
+import { isWhatsAppAudio } from "./whatsapp-media.js";
 
 export class ScrapeService {
   constructor(browser, { sleep = wait } = {}) {
@@ -447,6 +448,33 @@ export class ScrapeService {
         offset + items.length < all.length ? offset + items.length : null,
     };
   }
+  async voiceNote({ jobId, messageId, offset = 0 }) {
+    const job = this.get(jobId);
+    if (job.source.adapter.id !== "whatsapp")
+      throw new Error("Voice-note downloads require a WhatsApp job.");
+    if (job.state === "running")
+      throw new Error("Wait for collection to stop before downloading audio.");
+    if (!Number.isSafeInteger(offset) || offset < 0)
+      throw new Error("Audio offset must be a nonnegative integer.");
+    const message = job.session.messages.find((m) => m.id === messageId);
+    if (!message?.attachments?.some(isWhatsAppAudio))
+      throw new Error("This job has no downloadable audio for that message.");
+    await this.selected(job.source.sourceId);
+    const result = await this.execute(
+      job.source.tabId,
+      getPlatform("whatsapp").request,
+      {
+        kind: "media",
+        threadId: job.session.options.threadId,
+        targetId: job.source.targetId,
+        messageId,
+        offset,
+      },
+    );
+    await this.selected(job.source.sourceId);
+    this.get(jobId);
+    return result;
+  }
   async handle(method, params = {}) {
     if (method === "browser_info")
       return {
@@ -482,6 +510,7 @@ export class ScrapeService {
     if (method === "start_scrape") return this.start(params);
     if (method === "get_status") return this.status(this.get(params.jobId));
     if (method === "get_results") return this.results(params);
+    if (method === "get_voice_note") return this.voiceNote(params);
     if (method === "cancel_job") {
       const job = this.get(params.jobId);
       job.controller.abort(new Error("Cancelled by caller"));

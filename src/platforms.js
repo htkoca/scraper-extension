@@ -49,7 +49,7 @@ export const platforms = {
     request: whatsappRequest,
     matches: (url) =>
       url.origin === "https://web.whatsapp.com" && url.pathname === "/",
-    capabilities: { media: false, transcribe: false, queryId: false },
+    capabilities: { media: true, transcribe: false, queryId: false },
     messageRequest: () => ({}),
     page: (result) => result.page,
   },

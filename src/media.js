@@ -1,8 +1,9 @@
 import { isMediaUrl } from "./model.js";
 import { safeName } from "./export.js";
+import { isWhatsAppAudio } from "./whatsapp-media.js";
 export async function downloadMedia(
   messages,
-  { signal, progress = () => {}, fetcher = fetch } = {},
+  { signal, progress = () => {}, fetcher = fetch, loadWhatsAppAudio } = {},
 ) {
   const files = new Map(),
     paths = new Map(),
@@ -21,17 +22,26 @@ export async function downloadMedia(
       const i = index++,
         a = attachments[i];
       try {
-        if (!isMediaUrl(a.url)) throw new Error("Not an allowed Meta CDN URL");
-        const response = await fetcher(a.url, {
-          credentials: "omit",
-          redirect: "error",
-          signal: AbortSignal.any([
-            signal || new AbortController().signal,
-            AbortSignal.timeout(25000),
-          ]),
-        });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const blob = await response.blob();
+        let blob;
+        if (isWhatsAppAudio(a)) {
+          if (!loadWhatsAppAudio)
+            throw new Error("Connect to WhatsApp to download this audio.");
+          blob = await loadWhatsAppAudio(a, { signal });
+        } else {
+          if (!isMediaUrl(a.url))
+            throw new Error("Not an allowed Meta CDN URL");
+          const response = await fetcher(a.url, {
+            credentials: "omit",
+            redirect: "error",
+            signal: AbortSignal.any([
+              signal || new AbortController().signal,
+              AbortSignal.timeout(25000),
+            ]),
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          blob = await response.blob();
+        }
+        signal?.throwIfAborted();
         if (!blob.size) throw new Error("Empty attachment");
         const mime = blob.type.split(";")[0];
         const ext =
@@ -44,6 +54,10 @@ export async function downloadMedia(
             "audio/mp4": "m4a",
             "audio/mpeg": "mp3",
             "audio/ogg": "ogg",
+            "audio/webm": "webm",
+            "audio/aac": "aac",
+            "audio/wav": "wav",
+            "audio/opus": "opus",
             "video/webm": "webm",
           }[mime] || "bin";
         const path = `attachments/${String(i + 1).padStart(6, "0")}-${safeName(a.type)}.${ext}`;
@@ -74,7 +88,10 @@ export async function downloadMedia(
   const rejected = results.find((r) => r.status === "rejected");
   if (rejected) throw rejected.reason;
   for (const message of messages)
-    for (const a of message.attachments)
+    for (const a of message.attachments) {
       a.status = paths.has(a.url) ? "downloaded" : "failed";
+      if (paths.has(a.url)) a.path = paths.get(a.url);
+      else delete a.path;
+    }
   return { files, paths, embedded, failures };
 }

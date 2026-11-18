@@ -3,7 +3,7 @@ export async function whatsappRequest(request) {
   try {
     if (location.origin !== "https://web.whatsapp.com")
       throw new Error("Open web.whatsapp.com first.");
-    if (!["context", "messages"].includes(request.kind))
+    if (!["context", "messages", "media"].includes(request.kind))
       throw new Error("WhatsApp does not support this request.");
     let collections;
     try {
@@ -38,10 +38,108 @@ export async function whatsappRequest(request) {
         threadId,
         title: chat.formattedTitle || chat.name || threadId,
         warnings: [
-          "WhatsApp exports history available to this linked browser. Older phone history may be unavailable. Attachments are recorded as metadata. Media downloads, reactions, and voice transcription are not supported yet.",
+          "WhatsApp exports history available to this linked browser. Older phone history may be unavailable. Voice notes and audio can be downloaded in a ZIP. Other media, reactions, and voice transcription are not supported.",
         ],
       };
     const key = (message) => id(message.id);
+    if (request.kind === "media") {
+      const offset = request.offset ?? 0;
+      if (
+        !request.threadId ||
+        !request.messageId ||
+        !Number.isSafeInteger(offset) ||
+        offset < 0
+      )
+        throw new Error(
+          "Audio requires a conversation, message ID, and nonnegative byte offset.",
+        );
+      const message = chat.msgs
+        .getModelsArray()
+        .find((m) => key(m) === request.messageId);
+      if (!message)
+        throw new Error(
+          "WhatsApp unloaded this message. Collect the conversation again.",
+        );
+      if (!["ptt", "audio"].includes(message.type) || message.isViewOnce)
+        throw new Error(
+          "Only ordinary WhatsApp voice notes and audio are supported.",
+        );
+      const getBlob = () => {
+        let cached;
+        try {
+          cached = window
+            .require("WAWebMediaInMemoryBlobCache")
+            .InMemoryMediaBlobCache.get(message.mediaObject?.filehash);
+        } catch {
+          /* Older clients may only expose mediaBlob. */
+        }
+        return cached || message.mediaObject?.mediaBlob?.forceToBlob?.();
+      };
+      let blob = getBlob();
+      if (!blob) {
+        if (!message.mediaData || typeof message.downloadMedia !== "function")
+          throw new Error("WhatsApp's audio downloader is unavailable.");
+        let timer;
+        try {
+          await Promise.race([
+            message.downloadMedia({
+              downloadEvenIfExpensive: true,
+              rmrReason: 1,
+              isUserInitiated: true,
+            }),
+            new Promise((_, reject) => {
+              timer = setTimeout(
+                () =>
+                  reject(
+                    new Error("WhatsApp audio download timed out. Try again."),
+                  ),
+                25000,
+              );
+            }),
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+        blob = getBlob();
+      }
+      if (!(blob instanceof Blob) || !blob.size)
+        throw new Error(
+          "This audio is unavailable to the linked browser. Try downloading it in WhatsApp first.",
+        );
+      const mime = String(message.mimetype || blob.type)
+        .split(";")[0]
+        .toLowerCase();
+      if (!/^audio\/[a-z0-9.+-]+$/.test(mime))
+        throw new Error("WhatsApp returned an unsupported audio format.");
+      if (offset >= blob.size)
+        throw new Error("Audio offset is past the end of the file.");
+      const bytes = new Uint8Array(
+        await blob.slice(offset, offset + 196608).arrayBuffer(),
+      );
+      if (
+        location.origin !== "https://web.whatsapp.com" ||
+        (request.targetId
+          ? collections.Chat.get(request.targetId)
+          : collections.Chat.getActive?.()) !== chat ||
+        !chat.msgs.getModelsArray().includes(message) ||
+        message.isViewOnce
+      )
+        throw new Error(
+          "The WhatsApp conversation changed during audio download.",
+        );
+      let binary = "";
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      return {
+        ok: true,
+        messageId: key(message),
+        offset,
+        totalBytes: blob.size,
+        mime,
+        data: btoa(binary),
+        nextOffset:
+          offset + bytes.length < blob.size ? offset + bytes.length : null,
+      };
+    }
     const sorted = () =>
       [...chat.msgs.getModelsArray()].sort(
         (a, b) => Number(b.t) - Number(a.t) || key(b).localeCompare(key(a)),
@@ -121,7 +219,18 @@ export async function whatsappRequest(request) {
         text: String(m.body || m.caption || `[${type}]`),
         type,
         reactions: [],
-        attachments: [],
+        attachments:
+          ["ptt", "audio"].includes(type) && !m.isViewOnce
+            ? [
+                {
+                  type: "audio",
+                  provider: "whatsapp",
+                  messageId: raw.id,
+                  url: `whatsapp:audio/${encodeURIComponent(raw.id)}`,
+                  mime: raw.mimetype,
+                },
+              ]
+            : [],
         raw,
       };
     });

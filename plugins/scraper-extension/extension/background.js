@@ -988,7 +988,7 @@ async function whatsappRequest(request) {
   try {
     if (location.origin !== "https://web.whatsapp.com")
       throw new Error("Open web.whatsapp.com first.");
-    if (!["context", "messages"].includes(request.kind))
+    if (!["context", "messages", "media"].includes(request.kind))
       throw new Error("WhatsApp does not support this request.");
     let collections;
     try {
@@ -1021,10 +1021,87 @@ async function whatsappRequest(request) {
         threadId,
         title: chat.formattedTitle || chat.name || threadId,
         warnings: [
-          "WhatsApp exports history available to this linked browser. Older phone history may be unavailable. Attachments are recorded as metadata. Media downloads, reactions, and voice transcription are not supported yet."
+          "WhatsApp exports history available to this linked browser. Older phone history may be unavailable. Voice notes and audio can be downloaded in a ZIP. Other media, reactions, and voice transcription are not supported."
         ]
       };
     const key = (message) => id(message.id);
+    if (request.kind === "media") {
+      const offset2 = request.offset ?? 0;
+      if (!request.threadId || !request.messageId || !Number.isSafeInteger(offset2) || offset2 < 0)
+        throw new Error(
+          "Audio requires a conversation, message ID, and nonnegative byte offset."
+        );
+      const message = chat.msgs.getModelsArray().find((m) => key(m) === request.messageId);
+      if (!message)
+        throw new Error(
+          "WhatsApp unloaded this message. Collect the conversation again."
+        );
+      if (!["ptt", "audio"].includes(message.type) || message.isViewOnce)
+        throw new Error(
+          "Only ordinary WhatsApp voice notes and audio are supported."
+        );
+      const getBlob = () => {
+        let cached;
+        try {
+          cached = window.require("WAWebMediaInMemoryBlobCache").InMemoryMediaBlobCache.get(message.mediaObject?.filehash);
+        } catch {
+        }
+        return cached || message.mediaObject?.mediaBlob?.forceToBlob?.();
+      };
+      let blob = getBlob();
+      if (!blob) {
+        if (!message.mediaData || typeof message.downloadMedia !== "function")
+          throw new Error("WhatsApp's audio downloader is unavailable.");
+        let timer;
+        try {
+          await Promise.race([
+            message.downloadMedia({
+              downloadEvenIfExpensive: true,
+              rmrReason: 1,
+              isUserInitiated: true
+            }),
+            new Promise((_, reject) => {
+              timer = setTimeout(
+                () => reject(
+                  new Error("WhatsApp audio download timed out. Try again.")
+                ),
+                25e3
+              );
+            })
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+        blob = getBlob();
+      }
+      if (!(blob instanceof Blob) || !blob.size)
+        throw new Error(
+          "This audio is unavailable to the linked browser. Try downloading it in WhatsApp first."
+        );
+      const mime = String(message.mimetype || blob.type).split(";")[0].toLowerCase();
+      if (!/^audio\/[a-z0-9.+-]+$/.test(mime))
+        throw new Error("WhatsApp returned an unsupported audio format.");
+      if (offset2 >= blob.size)
+        throw new Error("Audio offset is past the end of the file.");
+      const bytes = new Uint8Array(
+        await blob.slice(offset2, offset2 + 196608).arrayBuffer()
+      );
+      if (location.origin !== "https://web.whatsapp.com" || (request.targetId ? collections.Chat.get(request.targetId) : collections.Chat.getActive?.()) !== chat || !chat.msgs.getModelsArray().includes(message) || message.isViewOnce)
+        throw new Error(
+          "The WhatsApp conversation changed during audio download."
+        );
+      let binary = "";
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      return {
+        ok: true,
+        messageId: key(message),
+        offset: offset2,
+        totalBytes: blob.size,
+        mime,
+        data: btoa(binary),
+        nextOffset: offset2 + bytes.length < blob.size ? offset2 + bytes.length : null
+      };
+    }
     const sorted = () => [...chat.msgs.getModelsArray()].sort(
       (a, b) => Number(b.t) - Number(a.t) || key(b).localeCompare(key(a))
     );
@@ -1095,7 +1172,15 @@ async function whatsappRequest(request) {
         text: String(m.body || m.caption || `[${type}]`),
         type,
         reactions: [],
-        attachments: [],
+        attachments: ["ptt", "audio"].includes(type) && !m.isViewOnce ? [
+          {
+            type: "audio",
+            provider: "whatsapp",
+            messageId: raw.id,
+            url: `whatsapp:audio/${encodeURIComponent(raw.id)}`,
+            mime: raw.mimetype
+          }
+        ] : [],
         raw
       };
     });
@@ -1147,7 +1232,7 @@ var platforms = {
     label: "WhatsApp",
     request: whatsappRequest,
     matches: (url) => url.origin === "https://web.whatsapp.com" && url.pathname === "/",
-    capabilities: { media: false, transcribe: false, queryId: false },
+    capabilities: { media: true, transcribe: false, queryId: false },
     messageRequest: () => ({}),
     page: (result) => result.page
   }
@@ -1776,6 +1861,11 @@ async function mapsPlaceRequest() {
   };
 }
 
+// src/whatsapp-media.js
+function isWhatsAppAudio(attachment) {
+  return attachment.provider === "whatsapp" && attachment.type === "audio" && typeof attachment.messageId === "string" && attachment.messageId.length > 0 && attachment.url === `whatsapp:audio/${encodeURIComponent(attachment.messageId)}`;
+}
+
 // src/scrape-service.js
 var ScrapeService = class {
   constructor(browser, { sleep = wait } = {}) {
@@ -2143,6 +2233,33 @@ var ScrapeService = class {
       nextOffset: offset + items.length < all.length ? offset + items.length : null
     };
   }
+  async voiceNote({ jobId, messageId, offset = 0 }) {
+    const job = this.get(jobId);
+    if (job.source.adapter.id !== "whatsapp")
+      throw new Error("Voice-note downloads require a WhatsApp job.");
+    if (job.state === "running")
+      throw new Error("Wait for collection to stop before downloading audio.");
+    if (!Number.isSafeInteger(offset) || offset < 0)
+      throw new Error("Audio offset must be a nonnegative integer.");
+    const message = job.session.messages.find((m) => m.id === messageId);
+    if (!message?.attachments?.some(isWhatsAppAudio))
+      throw new Error("This job has no downloadable audio for that message.");
+    await this.selected(job.source.sourceId);
+    const result = await this.execute(
+      job.source.tabId,
+      getPlatform("whatsapp").request,
+      {
+        kind: "media",
+        threadId: job.session.options.threadId,
+        targetId: job.source.targetId,
+        messageId,
+        offset
+      }
+    );
+    await this.selected(job.source.sourceId);
+    this.get(jobId);
+    return result;
+  }
   async handle(method, params = {}) {
     if (method === "browser_info")
       return {
@@ -2176,6 +2293,7 @@ var ScrapeService = class {
     if (method === "start_scrape") return this.start(params);
     if (method === "get_status") return this.status(this.get(params.jobId));
     if (method === "get_results") return this.results(params);
+    if (method === "get_voice_note") return this.voiceNote(params);
     if (method === "cancel_job") {
       const job = this.get(params.jobId);
       job.controller.abort(new Error("Cancelled by caller"));
@@ -2299,8 +2417,12 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       throw new Error(
         "The source tab changed platforms. Reconnect before collecting."
       );
-    if (!["context", "messages", "transcription"].includes(message.request?.kind))
+    if (!["context", "messages", "transcription", "media"].includes(
+      message.request?.kind
+    ))
       throw new Error("Unknown request.");
+    if (message.request.kind === "media" && platform.id !== "whatsapp")
+      throw new Error("Page audio downloads are only available for WhatsApp.");
     if (message.request.kind === "transcription" && !platform.capabilities.transcribe)
       throw new Error("Transcription is unavailable for this platform.");
     const [result] = await chrome.scripting.executeScript({

@@ -2,6 +2,7 @@ import { getPlatform } from "./platforms.js";
 import { createSession, parseDateRange } from "./model.js";
 import { fetchHistory, transcribe } from "./runner.js";
 import { downloadMedia } from "./media.js";
+import { downloadWhatsAppAudio } from "./whatsapp-media.js";
 import { jsonReport, textReport, htmlReport, safeName } from "./export.js";
 import { zipSync, strToU8 } from "fflate";
 const $ = (id) => document.getElementById(id);
@@ -75,6 +76,14 @@ async function connect() {
         !platform.capabilities[capability];
     }
     const saved = result.platform === "instagram-saved";
+    $("media-label").textContent =
+      result.platform === "whatsapp"
+        ? "Download voice notes and audio"
+        : "Download attachments";
+    $("media-hint").textContent =
+      result.platform === "whatsapp"
+        ? "Audio files are included in the ZIP. Other media is not downloaded."
+        : "Include images in HTML and PDF, and media files in a ZIP.";
     for (const id of ["from", "to"]) {
       $(id).disabled = saved;
       $(id).closest("label").hidden = saved;
@@ -111,12 +120,18 @@ async function collect() {
       report("Downloading attachments…");
       media = await downloadMedia(session.messages, {
         signal,
+        loadWhatsAppAudio: (attachment, options) =>
+          downloadWhatsAppAudio(attachment, {
+            ...options,
+            request,
+            threadId: session.options.threadId,
+          }),
         progress: (done, total) => report(`Attachments: ${done} / ${total}`),
       });
       mediaComplete = true;
       if (media.failures.length)
         session.warnings.push(
-          `${media.failures.length} attachments could not be downloaded. Original URLs remain in the archive; details are in the ZIP.`,
+          `${media.failures.length} attachments could not be downloaded. Message history is retained; details are in the ZIP's attachment-errors.json.`,
         );
     }
     report(

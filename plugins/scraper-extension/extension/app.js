@@ -519,7 +519,7 @@ async function whatsappRequest(request2) {
   try {
     if (location.origin !== "https://web.whatsapp.com")
       throw new Error("Open web.whatsapp.com first.");
-    if (!["context", "messages"].includes(request2.kind))
+    if (!["context", "messages", "media"].includes(request2.kind))
       throw new Error("WhatsApp does not support this request.");
     let collections;
     try {
@@ -552,10 +552,87 @@ async function whatsappRequest(request2) {
         threadId,
         title: chat.formattedTitle || chat.name || threadId,
         warnings: [
-          "WhatsApp exports history available to this linked browser. Older phone history may be unavailable. Attachments are recorded as metadata. Media downloads, reactions, and voice transcription are not supported yet."
+          "WhatsApp exports history available to this linked browser. Older phone history may be unavailable. Voice notes and audio can be downloaded in a ZIP. Other media, reactions, and voice transcription are not supported."
         ]
       };
     const key = (message) => id(message.id);
+    if (request2.kind === "media") {
+      const offset2 = request2.offset ?? 0;
+      if (!request2.threadId || !request2.messageId || !Number.isSafeInteger(offset2) || offset2 < 0)
+        throw new Error(
+          "Audio requires a conversation, message ID, and nonnegative byte offset."
+        );
+      const message = chat.msgs.getModelsArray().find((m) => key(m) === request2.messageId);
+      if (!message)
+        throw new Error(
+          "WhatsApp unloaded this message. Collect the conversation again."
+        );
+      if (!["ptt", "audio"].includes(message.type) || message.isViewOnce)
+        throw new Error(
+          "Only ordinary WhatsApp voice notes and audio are supported."
+        );
+      const getBlob = () => {
+        let cached;
+        try {
+          cached = window.require("WAWebMediaInMemoryBlobCache").InMemoryMediaBlobCache.get(message.mediaObject?.filehash);
+        } catch {
+        }
+        return cached || message.mediaObject?.mediaBlob?.forceToBlob?.();
+      };
+      let blob = getBlob();
+      if (!blob) {
+        if (!message.mediaData || typeof message.downloadMedia !== "function")
+          throw new Error("WhatsApp's audio downloader is unavailable.");
+        let timer;
+        try {
+          await Promise.race([
+            message.downloadMedia({
+              downloadEvenIfExpensive: true,
+              rmrReason: 1,
+              isUserInitiated: true
+            }),
+            new Promise((_, reject) => {
+              timer = setTimeout(
+                () => reject(
+                  new Error("WhatsApp audio download timed out. Try again.")
+                ),
+                25e3
+              );
+            })
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+        blob = getBlob();
+      }
+      if (!(blob instanceof Blob) || !blob.size)
+        throw new Error(
+          "This audio is unavailable to the linked browser. Try downloading it in WhatsApp first."
+        );
+      const mime = String(message.mimetype || blob.type).split(";")[0].toLowerCase();
+      if (!/^audio\/[a-z0-9.+-]+$/.test(mime))
+        throw new Error("WhatsApp returned an unsupported audio format.");
+      if (offset2 >= blob.size)
+        throw new Error("Audio offset is past the end of the file.");
+      const bytes = new Uint8Array(
+        await blob.slice(offset2, offset2 + 196608).arrayBuffer()
+      );
+      if (location.origin !== "https://web.whatsapp.com" || (request2.targetId ? collections.Chat.get(request2.targetId) : collections.Chat.getActive?.()) !== chat || !chat.msgs.getModelsArray().includes(message) || message.isViewOnce)
+        throw new Error(
+          "The WhatsApp conversation changed during audio download."
+        );
+      let binary = "";
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      return {
+        ok: true,
+        messageId: key(message),
+        offset: offset2,
+        totalBytes: blob.size,
+        mime,
+        data: btoa(binary),
+        nextOffset: offset2 + bytes.length < blob.size ? offset2 + bytes.length : null
+      };
+    }
     const sorted = () => [...chat.msgs.getModelsArray()].sort(
       (a, b) => Number(b.t) - Number(a.t) || key(b).localeCompare(key(a))
     );
@@ -626,7 +703,15 @@ async function whatsappRequest(request2) {
         text: String(m.body || m.caption || `[${type}]`),
         type,
         reactions: [],
-        attachments: [],
+        attachments: ["ptt", "audio"].includes(type) && !m.isViewOnce ? [
+          {
+            type: "audio",
+            provider: "whatsapp",
+            messageId: raw.id,
+            url: `whatsapp:audio/${encodeURIComponent(raw.id)}`,
+            mime: raw.mimetype
+          }
+        ] : [],
         raw
       };
     });
@@ -678,7 +763,7 @@ var platforms = {
     label: "WhatsApp",
     request: whatsappRequest,
     matches: (url) => url.origin === "https://web.whatsapp.com" && url.pathname === "/",
-    capabilities: { media: false, transcribe: false, queryId: false },
+    capabilities: { media: true, transcribe: false, queryId: false },
     messageRequest: () => ({}),
     page: (result) => result.page
   }
@@ -782,6 +867,40 @@ async function transcribe(session2, { request: request2, signal, progress = () =
     );
 }
 
+// src/whatsapp-media.js
+function isWhatsAppAudio(attachment) {
+  return attachment.provider === "whatsapp" && attachment.type === "audio" && typeof attachment.messageId === "string" && attachment.messageId.length > 0 && attachment.url === `whatsapp:audio/${encodeURIComponent(attachment.messageId)}`;
+}
+async function downloadWhatsAppAudio(attachment, { request: request2, threadId, signal }) {
+  if (!isWhatsAppAudio(attachment))
+    throw new Error("Invalid WhatsApp audio reference.");
+  const parts = [];
+  let offset = 0, total, mime;
+  do {
+    signal?.throwIfAborted();
+    const chunk = await request2({
+      kind: "media",
+      threadId,
+      messageId: attachment.messageId,
+      offset
+    });
+    signal?.throwIfAborted();
+    if (!chunk?.ok)
+      throw new Error(chunk?.error || "WhatsApp audio did not respond.");
+    if (chunk.messageId !== attachment.messageId || chunk.offset !== offset || !Number.isSafeInteger(chunk.totalBytes) || chunk.totalBytes <= offset || !/^audio\/[a-z0-9.+-]+$/.test(chunk.mime) || typeof chunk.data !== "string" || chunk.data.length > 262144 || offset > 0 && (chunk.totalBytes !== total || chunk.mime !== mime))
+      throw new Error("WhatsApp returned an inconsistent audio chunk.");
+    total = chunk.totalBytes;
+    mime = chunk.mime;
+    const bytes = Uint8Array.from(atob(chunk.data), (c) => c.charCodeAt(0));
+    const next = offset + bytes.length;
+    if (!bytes.length || next > total || chunk.nextOffset !== (next === total ? null : next))
+      throw new Error("WhatsApp returned an invalid audio checkpoint.");
+    parts.push(bytes);
+    offset = chunk.nextOffset;
+  } while (offset !== null);
+  return new Blob(parts, { type: mime });
+}
+
 // src/export.js
 var escapeHtml = (value) => String(value ?? "").replace(
   /[&<>"']/g,
@@ -861,6 +980,12 @@ function htmlReport(session2, embedded = /* @__PURE__ */ new Map(), paths = /* @
   const title = saved ? "Instagram saved posts" : `${getPlatform(session2.options.platform).label} conversation`;
   const rows = (saved ? session2.messages : chronological(session2.messages)).map((m) => {
     const media2 = m.attachments.map((a) => {
+      if (isWhatsAppAudio(a)) {
+        const local2 = paths.get(a.url);
+        if (local2 && /^attachments\/[\w-]+\.[a-z0-9]+$/.test(local2))
+          return `<div><a href="${e(local2)}" download>Download audio</a></div>`;
+        return `<p>Audio ${a.status === "failed" ? "download failed" : "files are available in the ZIP when downloaded"}.</p>`;
+      }
       if (!isMediaUrl(a.url)) return "";
       const data = embedded.get(a.url);
       const local = paths.get(a.url);
@@ -875,7 +1000,7 @@ function htmlReport(session2, embedded = /* @__PURE__ */ new Map(), paths = /* @
 
 // src/media.js
 async function downloadMedia(messages, { signal, progress = () => {
-}, fetcher = fetch } = {}) {
+}, fetcher = fetch, loadWhatsAppAudio } = {}) {
   const files = /* @__PURE__ */ new Map(), paths = /* @__PURE__ */ new Map(), embedded = /* @__PURE__ */ new Map(), failures = [];
   const attachments = [
     ...new Map(
@@ -888,17 +1013,26 @@ async function downloadMedia(messages, { signal, progress = () => {
       signal?.throwIfAborted();
       const i2 = index++, a = attachments[i2];
       try {
-        if (!isMediaUrl(a.url)) throw new Error("Not an allowed Meta CDN URL");
-        const response = await fetcher(a.url, {
-          credentials: "omit",
-          redirect: "error",
-          signal: AbortSignal.any([
-            signal || new AbortController().signal,
-            AbortSignal.timeout(25e3)
-          ])
-        });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const blob = await response.blob();
+        let blob;
+        if (isWhatsAppAudio(a)) {
+          if (!loadWhatsAppAudio)
+            throw new Error("Connect to WhatsApp to download this audio.");
+          blob = await loadWhatsAppAudio(a, { signal });
+        } else {
+          if (!isMediaUrl(a.url))
+            throw new Error("Not an allowed Meta CDN URL");
+          const response = await fetcher(a.url, {
+            credentials: "omit",
+            redirect: "error",
+            signal: AbortSignal.any([
+              signal || new AbortController().signal,
+              AbortSignal.timeout(25e3)
+            ])
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          blob = await response.blob();
+        }
+        signal?.throwIfAborted();
         if (!blob.size) throw new Error("Empty attachment");
         const mime = blob.type.split(";")[0];
         const ext = {
@@ -910,6 +1044,10 @@ async function downloadMedia(messages, { signal, progress = () => {
           "audio/mp4": "m4a",
           "audio/mpeg": "mp3",
           "audio/ogg": "ogg",
+          "audio/webm": "webm",
+          "audio/aac": "aac",
+          "audio/wav": "wav",
+          "audio/opus": "opus",
           "video/webm": "webm"
         }[mime] || "bin";
         const path = `attachments/${String(i2 + 1).padStart(6, "0")}-${safeName(a.type)}.${ext}`;
@@ -937,8 +1075,11 @@ async function downloadMedia(messages, { signal, progress = () => {
   const rejected = results.find((r) => r.status === "rejected");
   if (rejected) throw rejected.reason;
   for (const message of messages)
-    for (const a of message.attachments)
+    for (const a of message.attachments) {
       a.status = paths.has(a.url) ? "downloaded" : "failed";
+      if (paths.has(a.url)) a.path = paths.get(a.url);
+      else delete a.path;
+    }
   return { files, paths, embedded, failures };
 }
 
@@ -1707,6 +1848,8 @@ async function connect() {
       $(id).closest(capability === "queryId" ? "details" : "label").hidden = !platform.capabilities[capability];
     }
     const saved = result.platform === "instagram-saved";
+    $("media-label").textContent = result.platform === "whatsapp" ? "Download voice notes and audio" : "Download attachments";
+    $("media-hint").textContent = result.platform === "whatsapp" ? "Audio files are included in the ZIP. Other media is not downloaded." : "Include images in HTML and PDF, and media files in a ZIP.";
     for (const id of ["from", "to"]) {
       $(id).disabled = saved;
       $(id).closest("label").hidden = saved;
@@ -1740,12 +1883,17 @@ async function collect() {
       report("Downloading attachments\u2026");
       media = await downloadMedia(session.messages, {
         signal,
+        loadWhatsAppAudio: (attachment, options) => downloadWhatsAppAudio(attachment, {
+          ...options,
+          request,
+          threadId: session.options.threadId
+        }),
         progress: (done, total) => report(`Attachments: ${done} / ${total}`)
       });
       mediaComplete = true;
       if (media.failures.length)
         session.warnings.push(
-          `${media.failures.length} attachments could not be downloaded. Original URLs remain in the archive; details are in the ZIP.`
+          `${media.failures.length} attachments could not be downloaded. Message history is retained; details are in the ZIP's attachment-errors.json.`
         );
     }
     report(

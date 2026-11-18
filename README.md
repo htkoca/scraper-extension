@@ -11,7 +11,7 @@ No external scraping backend or copied login credentials are required. Chrome mu
 | Google Maps saved list | Name, address, weekly hours, rating, review count, place URL | `google-maps` |
 | Instagram saved collection | Caption, author, post URL, publication date | `instagram-saved` |
 | Instagram conversation | Messages and supported message metadata | `instagram` |
-| WhatsApp conversation | Available linked-browser messages and selected metadata | `whatsapp` |
+| WhatsApp conversation | Available linked-browser messages, metadata, voice notes and audio downloads | `whatsapp` |
 
 Website adapters depend on changing site internals. See [validation status](#validation-status) before relying on completeness.
 
@@ -182,7 +182,11 @@ Click **Collect conversation**, wait for completion, then choose a download:
 - Print / PDF opens a preview. Click Print, then choose **Save as PDF** in Chrome for selectable text.
 - ZIP includes JSON, text, HTML, downloaded media, and an attachment-error report. Extract the ZIP before opening its HTML.
 
-WhatsApp currently exports text, captions, sender names, timestamps, message types, and selected attachment/reply metadata. WhatsApp media files, reactions, and transcription are not supported; those controls are hidden. Only history available to the linked browser can be collected. A complete export means the requested range of that available history, not all history on your phone. Empty chats are supported.
+WhatsApp exports text, captions, sender names, timestamps, message types, and selected attachment/reply metadata. Select **Download voice notes and audio**, collect the conversation, then save a **ZIP bundle**. Extract it to open the audio files in `attachments/` or use the links in `conversation.html`. JSON includes each downloaded attachment's relative `path`. Standalone HTML and PDF do not embed audio.
+
+Agents can download WhatsApp audio with `get_voice_note` after collection stops. Use a message ID with an audio attachment from `get_results`, start at byte offset 0, decode each base64 chunk in order, and follow `nextOffset` until null. Verify the combined length matches `totalBytes`. Keep the source open until downloads finish, then release it. Audio is decrypted by the signed-in WhatsApp page; encryption keys never leave it.
+
+Unavailable or unloaded audio produces an explicit error while preserving message history. View-once audio, other WhatsApp media files, reactions, and transcription are unsupported. Only history available to the linked browser can be collected. A complete export means the requested range of that available history, not all history on your phone or successful download of every attachment. Empty chats are supported.
 
 Optional dates use your local timezone. An optional message count selects the latest matching messages; blank means all available messages. Attachments and Instagram-provided voice transcription are optional. Images, video, GIFs, and audio are discovered from the returned message fields. Unsupported content remains available in raw JSON.
 
@@ -212,9 +216,11 @@ No product-imposed export or message limit is present. Platform availability and
 - Transcription depends on Instagram supporting that particular audio attachment. Failures are reported without discarding message history.
 - Attachment URLs may expire. Download failures appear in the ZIP error report; original links remain in the archive.
 - Collections, attachment bytes, ZIPs, and embedded images are held in memory. For very large conversations, use date ranges and separate archives. ZIP creation can briefly block the UI.
-- Pause stops between platform requests; an in-flight request can take up to 25 seconds to finish. Media fetches cancel immediately.
+- Pause stops between platform requests; an in-flight request can take up to 25 seconds to finish. Instagram media fetches cancel immediately. WhatsApp audio pauses after the current page request; its internal download may continue in WhatsApp.
 
 Validation uses synthetic data, not personal messages. Unit/integration tests cover pagination, filtering, duplicate pages, retries, resume, query authentication, transcript reuse, CDN boundaries, and HTML escaping. The browser fixture verifies the collection and download UI. A live WhatsApp adapter smoke test collected 22 messages with valid timestamps and unique IDs. Automated WhatsApp tests cover earlier history, limits, resume, routing, and error handling. Full Chrome extension installation and a real Instagram export still need a smoke test in your profile.
+
+Voice-note downloads have synthetic coverage for chunk assembly, ZIP bytes, unavailable audio, cancellation, and changed sources. They still need a live signed-in WhatsApp smoke test.
 
 ## Manual installation
 

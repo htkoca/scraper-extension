@@ -86,7 +86,8 @@ test("MCP stdio to Unix socket to Chrome native framing works across concurrent 
   client = new Client({ name: "integration-test", version: "1.0.0" });
   await client.connect(transport);
   const tools = await client.listTools();
-  assert.equal(tools.tools.length, 14);
+  assert.equal(tools.tools.length, 15);
+  assert.ok(tools.tools.some((tool) => tool.name === "get_voice_note"));
   const listed = JSON.parse(
     (
       await client.callTool({

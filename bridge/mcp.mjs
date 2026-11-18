@@ -217,6 +217,16 @@ export function createMcpServer({
     jobId,
   });
   register(
+    "get_voice_note",
+    "Download a WhatsApp voice note or audio attachment from a stopped job. Use a messageId with a WhatsApp audio attachment in get_results. Returns base64 data, mime, totalBytes and nextOffset in chunks up to 192 KiB. Start at offset 0, decode each chunk in order into one local file, and follow nextOffset until null. Verify total bytes before saving. Keep the source open until finished. Unavailable audio returns an error; view-once audio is unsupported.",
+    {
+      jobId,
+      messageId: z.string().min(1),
+      offset: z.number().int().nonnegative().optional(),
+    },
+    true,
+  );
+  register(
     "resume_job",
     "Resume a failed or cancelled job from its last completed page or place. The original source must still be open and unchanged.",
     { jobId },

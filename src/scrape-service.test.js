@@ -71,6 +71,60 @@ async function finished(service, jobId) {
   return service.get(jobId);
 }
 
+test("voice-note chunks stay bound to a collected message and an unchanged permitted source", async () => {
+  const f = fixture();
+  const [source] = await f.service.listTabs();
+  const status = await f.service.start({ sourceId: source.sourceId });
+  const job = await finished(f.service, status.jobId);
+  job.source.targetId = "chat-1";
+  const message = job.session.messages[0];
+  message.attachments = [
+    {
+      type: "audio",
+      provider: "whatsapp",
+      messageId: "1",
+      url: "whatsapp:audio/1",
+    },
+  ];
+  const params = { jobId: job.id, messageId: "1", offset: 196608 };
+  let calls = 0;
+  f.browser.scripting.executeScript = async ({ args: [request] }) => {
+    calls++;
+    assert.deepEqual(request, {
+      kind: "media",
+      threadId: "chat-1",
+      targetId: "chat-1",
+      messageId: "1",
+      offset: 196608,
+    });
+    return [{ result: { ok: true, data: "YQ==", nextOffset: null } }];
+  };
+  await assert.rejects(
+    f.service.handle("get_voice_note", { ...params, messageId: "uncollected" }),
+    /no downloadable audio/,
+  );
+  await assert.rejects(
+    f.service.handle("get_voice_note", { ...params, offset: -1 }),
+    /offset/,
+  );
+  assert.equal(calls, 0);
+  assert.equal((await f.service.handle("get_voice_note", params)).data, "YQ==");
+  f.browser.permissions.contains = async () => false;
+  await assert.rejects(
+    f.service.handle("get_voice_note", params),
+    /access is missing/,
+  );
+  f.browser.permissions.contains = async () => true;
+  f.browser.scripting.executeScript = async () => {
+    f.update({ status: "loading" });
+    return [{ result: { ok: true, data: "YQ==" } }];
+  };
+  await assert.rejects(
+    f.service.handle("get_voice_note", params),
+    /expired or changed/,
+  );
+});
+
 test("source discovery filters unsupported and incognito tabs; invalidates navigated selections", async () => {
   const f = fixture();
   const tabs = await f.service.listTabs();
